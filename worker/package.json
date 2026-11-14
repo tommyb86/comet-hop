@@ -1,0 +1,16 @@
+{
+  "name": "comet-hop-leaderboard",
+  "private": true,
+  "description": "Daily leaderboard API for Comet Hop, running on Cloudflare Workers with a D1 database.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:init:local": "wrangler d1 execute comet-hop --local --file schema.sql",
+    "db:init": "wrangler d1 execute comet-hop --remote --file schema.sql",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.156.0"
+  },
+  "type": "module"
+}

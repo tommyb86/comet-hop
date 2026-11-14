@@ -159,6 +159,11 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--comet); o
 .board li.me .nm { color: var(--comet); }
 .board li.gapRow { background: none; color: var(--muted); padding-block: 0; }
 .boardNote { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.nick { display: grid; gap: 6px; }
+.nick label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.nickRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.nick input { min-width: 0; background: var(--deep); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 13px var(--mono); user-select: text; -webkit-user-select: text; }
+.nick input:focus-visible { outline: 2px solid var(--comet); outline-offset: 1px; }
 
 details { border-top: 1px solid var(--line); padding-top: 12px; }
 summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
@@ -228,6 +233,10 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       <div class="label">Today's leaderboard <span id="boardCountMenu"></span></div>
       <ol id="boardMenu"></ol>
       <p class="boardNote" id="boardNoteMenu"></p>
+      <form class="nick" id="nickFormMenu" hidden>
+        <label for="nickMenu">Your leaderboard nickname</label>
+        <div class="nickRow"><input id="nickMenu" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="e.g. Comet Tom"><button class="ghost" type="submit">Save</button></div>
+      </form>
     </section>
 
     <details id="howto">
@@ -269,6 +278,10 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       <div class="label">Today's leaderboard <span id="boardCountOver"></span></div>
       <ol id="boardOver"></ol>
       <p class="boardNote" id="boardNoteOver"></p>
+      <form class="nick" id="nickFormOver" hidden>
+        <label for="nickOver">Your leaderboard nickname</label>
+        <div class="nickRow"><input id="nickOver" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="e.g. Comet Tom"><button class="ghost" type="submit">Save</button></div>
+      </form>
     </section>
     <div class="foot"><span id="bestOver">Best 0</span><span>Furthest: <span id="sDist">0</span> AU</span></div>
   </div>
@@ -601,7 +614,10 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     const chips = [];
     const prevBest = modeBest();
     if (score > prevBest && score > 0) chips.push(['New best', '']);
-    if (mode === 'daily') { dailyLocal.best = Math.max(dailyLocal.best, score); }
+    if (mode === 'daily') {
+      if (score >= dailyLocal.best) dailyLocal.run = { score, hops, bulls, chain: maxCombo };
+      dailyLocal.best = Math.max(dailyLocal.best, score);
+    }
     else bestEndless = Math.max(bestEndless, score);
     const prevTop = topScore;
     topScore = Math.max(topScore, score);
@@ -662,7 +678,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
   function setMode(m) {
     if (m === mode) return;
     mode = m; store.set('comethop-mode', mode);
-    renderMode(); reset(); renderBoards();
+    renderMode(); reset(); renderBoards(); fetchBoard();
   }
   $('modeEndless').addEventListener('click', () => setMode('endless'));
   $('modeDaily').addEventListener('click', () => setMode('daily'));
@@ -692,12 +708,20 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
   }
 
   // ---------- shared daily leaderboard ----------
+  // On claude.ai the board uses the artifact's database. Anywhere else (the GitHub Pages
+  // copy) it uses the Cloudflare Worker in worker/, with nicknames instead of accounts.
+  const LEADERBOARD_API = '';
+  const NICK_RE = /^[\p{L}\p{N} _.'-]{1,20}$/u;
   let db = null, userApi = null, downloads = null, uid = null, myDaily = null;
   let boardRows = [], boardState = 'loading', canWrite = true, writing = Promise.resolve();
+  let web = false, webKey = '', nick = store.get('comethop-nick', '') || '', boardTotal = 0;
 
   async function initCaps() {
     const cl = window.claude;
-    if (!cl || typeof cl.use !== 'function') { boardState = 'off'; renderBoards(); return; }
+    if (!cl || typeof cl.use !== 'function') {
+      if (LEADERBOARD_API) initWeb(); else { boardState = 'off'; renderBoards(); }
+      return;
+    }
     const [d, u, dl] = await Promise.all([
       cl.use('db').catch(() => null), cl.use('user').catch(() => null), cl.use('downloads').catch(() => null),
     ]);
@@ -725,7 +749,71 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     } catch (e) { boardState = 'off'; renderBoards(); }
   }
 
+  async function initWeb() {
+    web = true;
+    let key = store.get('comethop-key', '');
+    if (!/^[0-9a-f]{32}$/.test(key)) {
+      const b = new Uint8Array(16); crypto.getRandomValues(b);
+      key = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+      store.set('comethop-key', key);
+    }
+    webKey = key;
+    try {
+      const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+      uid = [...new Uint8Array(h)].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 12);
+    } catch (e) { uid = null; }
+    for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
+    for (const id of ['nickFormMenu', 'nickFormOver']) $(id).hidden = false;
+    await fetchBoard();
+    setInterval(() => { if (!document.hidden && state !== 'play' && mode === 'daily') fetchBoard(); }, 30000);
+  }
+
+  async function fetchBoard() {
+    if (!web) return;
+    try {
+      const r = await fetch(`${LEADERBOARD_API}/scores?day=${TODAY}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      boardRows = d.scores.map(x => ({ id: x.pid, nickname: x.nickname, score: x.score }));
+      boardTotal = d.total; boardState = 'ok';
+    } catch (e) { boardState = 'off'; }
+    renderBoards();
+  }
+
+  // Posts today's best run; the server keeps the higher score and the latest nickname.
+  async function postBest(retried) {
+    const run = dailyLocal.run;
+    if (!web || !nick || !run || !run.score) return;
+    try {
+      const r = await fetch(`${LEADERBOARD_API}/scores`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day: TODAY, key: webKey, nickname: nick, ...run }),
+      });
+      if (r.status === 429 && !retried) { setTimeout(() => postBest(true), 2500); return; }
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        toast(e.error === 'bad_nickname' ? 'The leaderboard does not accept that nickname. Try another.' : 'Your score could not be posted. It is still saved on this device.');
+        return;
+      }
+      await fetchBoard();
+    } catch (e) { toast('The leaderboard cannot be reached. Your score is still saved on this device.'); }
+  }
+
+  for (const [formId, inputId] of [['nickFormMenu', 'nickMenu'], ['nickFormOver', 'nickOver']]) {
+    $(formId).addEventListener('submit', e => {
+      e.preventDefault();
+      const v = $(inputId).value.trim().replace(/\s+/g, ' ');
+      if (!NICK_RE.test(v)) { toast("Use 1 to 20 letters, numbers, spaces or . _ ' -"); return; }
+      nick = v; store.set('comethop-nick', nick);
+      for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
+      $(inputId).blur();
+      toast(dailyLocal.run && dailyLocal.run.score ? `Posting your best as ${nick}` : `Saved. Your daily best will post as ${nick}`);
+      renderBoards(); postBest();
+    });
+  }
+
   function submitDaily() {
+    if (web) { if (score > 0 && score >= dailyLocal.best) postBest(); else fetchBoard(); return; }
     if (!db || !uid || !canWrite) return;
     if (myDaily && myDaily.day === TODAY && myDaily.score >= score) return;
     const body = { day: TODAY, score, hops, bulls, chain: maxCombo, skin: skinId, at: new Date().toISOString() };
@@ -747,9 +835,14 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     for (const [listId, noteId, countId] of [['boardMenu', 'boardNoteMenu', 'boardCountMenu'], ['boardOver', 'boardNoteOver', 'boardCountOver']]) {
       const ol = $(listId); ol.textContent = '';
       const note = $(noteId);
-      $(countId).textContent = boardRows.length ? `${boardRows.length} pilot${boardRows.length === 1 ? '' : 's'}` : '';
+      const total = web ? boardTotal : boardRows.length;
+      $(countId).textContent = total ? `${total} pilot${total === 1 ? '' : 's'}` : '';
       if (boardState === 'loading') { note.textContent = 'Loading today’s scores…'; continue; }
-      if (boardState === 'off') { note.textContent = 'The shared leaderboard needs you signed in to claude.ai. Your daily best still saves on this device.'; continue; }
+      if (boardState === 'off') {
+        note.textContent = web ? 'The leaderboard cannot be reached right now. Your daily best still saves on this device.'
+          : 'The shared leaderboard needs you signed in to claude.ai. Your daily best still saves on this device.';
+        continue;
+      }
       const myIdx = boardRows.findIndex(r => r.id === uid);
       const show = boardRows.slice(0, 6).map((r, i) => [r, i]);
       if (myIdx >= 6) show.push(null, [boardRows[myIdx], myIdx]);
@@ -760,14 +853,15 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
         if (r.id === uid) li.className = 'me';
         const rk = document.createElement('span'); rk.className = 'rk'; rk.textContent = '#' + (i + 1);
         const nm = document.createElement('span'); nm.className = 'nm';
-        const nmTxt = (names[r.id] && names[r.id].name) || 'Pilot';
+        const nmTxt = r.nickname || (names[r.id] && names[r.id].name) || 'Pilot';
         nm.textContent = r.id === uid ? `${nmTxt} (you)` : nmTxt;
         const sc = document.createElement('span'); sc.className = 'sc'; sc.textContent = Number(r.score) || 0;
         li.append(rk, nm, sc); ol.appendChild(li);
       }
-      if (!boardRows.length) note.textContent = 'No scores yet today. Set the first one.';
+      if (!boardRows.length) note.textContent = web && !nick ? 'No scores yet today. Add a nickname and set the first one.' : 'No scores yet today. Set the first one.';
+      else if (web && !nick) note.textContent = 'Add a nickname to post your daily best.';
       else if (!canWrite) note.textContent = 'You can see the board, but your access is view-only, so your score stays on this device.';
-      else if (myIdx >= 0) note.textContent = `You're #${myIdx + 1} of ${boardRows.length} today.`;
+      else if (myIdx >= 0) note.textContent = `You're #${myIdx + 1} of ${total} today.`;
       else note.textContent = 'Fly a run to get on the board.';
     }
   }
@@ -883,7 +977,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
   function toMenu() {
     state = 'ready'; reset();
     $('over').hidden = true; $('menu').hidden = false;
-    renderSkins(); renderMode(); renderBoards();
+    renderSkins(); renderMode(); renderBoards(); fetchBoard();
   }
   window.addEventListener('pointerdown', e => {
     const tg = e.target;
@@ -895,7 +989,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
   $('againBtn').addEventListener('click', e => { e.stopPropagation(); if (state === 'over') { reset(); ensureAudio(); start(); } });
   $('menuBtn').addEventListener('click', e => { e.stopPropagation(); toMenu(); });
   window.addEventListener('keydown', e => {
-    if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SUMMARY')) return;
+    if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SUMMARY')) return;
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowUp') { e.preventDefault(); act(); }
   });
 
