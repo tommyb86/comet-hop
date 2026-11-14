@@ -2,7 +2,7 @@
 
 A one-tap mobile game. Your comet orbits a planet: tap to break orbit, fly into the next planet's gravity ring, and keep climbing before your orbit decays.
 
-**Play it:** https://tommyb86.github.io/comet-hop/ (once GitHub Pages is turned on)
+**Play it:** https://tombawden.dev/comet-hop/ (once GitHub Pages is turned on)
 
 ## How to play
 
