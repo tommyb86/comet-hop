@@ -9,5 +9,4 @@ ALLOWED_ORIGINS = "https://tombawden.dev,https://tommyb86.github.io,http://local
 [[d1_databases]]
 binding = "DB"
 database_name = "comet-hop"
-# Replace with the id printed by `npx wrangler d1 create comet-hop`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3d9932e8-ff4c-409b-9976-175bdd1529b6"

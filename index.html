@@ -710,7 +710,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
   // ---------- shared daily leaderboard ----------
   // On claude.ai the board uses the artifact's database. Anywhere else (the GitHub Pages
   // copy) it uses the Cloudflare Worker in worker/, with nicknames instead of accounts.
-  const LEADERBOARD_API = '';
+  const LEADERBOARD_API = 'https://comet-hop-leaderboard.tomwbawden.workers.dev';
   const NICK_RE = /^[\p{L}\p{N} _.'-]{1,20}$/u;
   let db = null, userApi = null, downloads = null, uid = null, myDaily = null;
   let boardRows = [], boardState = 'loading', canWrite = true, writing = Promise.resolve();
