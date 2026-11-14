@@ -230,7 +230,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     <button class="go" id="startBtn" type="button">Launch</button>
 
     <section class="board" id="boardMenuWrap" hidden>
-      <div class="label">Today's leaderboard <span id="boardCountMenu"></span></div>
+      <div class="label">Today's Daily leaderboard <span id="boardCountMenu"></span></div>
       <ol id="boardMenu"></ol>
       <p class="boardNote" id="boardNoteMenu"></p>
       <form class="nick" id="nickFormMenu" hidden>
@@ -672,7 +672,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     $('modeNote').textContent = mode === 'daily'
       ? `Everyone gets the same planets today (UTC). Your best run counts, and a ghost of it flies with you next time. A new sky arrives at midnight UTC.`
       : 'A fresh random sky every run. Your best score unlocks new comets.';
-    $('boardMenuWrap').hidden = mode !== 'daily';
+    $('boardMenuWrap').hidden = false; // the daily board shows on both tabs
     updateHud();
   }
   function setMode(m) {
@@ -765,7 +765,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
     for (const id of ['nickFormMenu', 'nickFormOver']) $(id).hidden = false;
     await fetchBoard();
-    setInterval(() => { if (!document.hidden && state !== 'play' && mode === 'daily') fetchBoard(); }, 30000);
+    setInterval(() => { if (!document.hidden && state !== 'play') fetchBoard(); }, 30000);
   }
 
   async function fetchBoard() {
