@@ -164,6 +164,10 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--comet); o
 .nickRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .nick input { min-width: 0; background: var(--deep); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 13px var(--mono); user-select: text; -webkit-user-select: text; }
 .nick input:focus-visible { outline: 2px solid var(--comet); outline-offset: 1px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.postPrompt { display: grid; gap: 10px; padding: 14px; border-radius: 14px; border: 1px solid var(--comet); background: rgba(255, 210, 122, .08); }
+.postPrompt h3 { margin: 0; font: 800 15px var(--display); color: var(--comet); }
+.postPrompt p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
 
 details { border-top: 1px solid var(--line); padding-top: 12px; }
 summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
@@ -266,6 +270,14 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       <div class="stat"><span class="l">Hops</span><span class="v" id="sHops">0</span></div>
       <div class="stat"><span class="l">Bullseyes</span><span class="v" id="sBulls">0</span></div>
     </div>
+    <section class="postPrompt" id="postPrompt" hidden>
+      <h3 id="postPromptTitle">Post your score</h3>
+      <p>Pick a nickname for the leaderboard. Your best runs post automatically from now on.</p>
+      <form class="nick" id="nickFormPrompt">
+        <label for="nickPrompt" class="visually-hidden">Nickname</label>
+        <div class="nickRow"><input id="nickPrompt" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="e.g. Comet Tom"><button class="ghost" type="submit">Post</button></div>
+      </form>
+    </section>
     <button class="go" id="againBtn" type="button">Fly again</button>
     <div class="row">
       <button class="ghost" id="copyBtn" type="button">Copy result</button>
@@ -647,6 +659,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       ch.hidden = !chips.length;
       $('copyBox').hidden = true;
       $('boardOverWrap').hidden = !web && mode !== 'daily';
+      showPostPrompt();
       updateHud(); renderSkins(); renderBoards();
       $('over').hidden = false;
     }, 650);
@@ -767,7 +780,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
       uid = [...new Uint8Array(h)].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 12);
     } catch (e) { uid = null; }
-    for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
+    for (const id of ['nickMenu', 'nickOver', 'nickPrompt']) $(id).value = nick;
     for (const id of ['nickFormMenu', 'nickFormOver']) $(id).hidden = false;
     await fetchBoard();
     setInterval(() => { if (!document.hidden && state !== 'play') fetchBoard(); }, 30000);
@@ -813,14 +826,24 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     } catch (e) { toast('The leaderboard cannot be reached. Your score is still saved on this device.'); }
   }
 
-  for (const [formId, inputId] of [['nickFormMenu', 'nickMenu'], ['nickFormOver', 'nickOver']]) {
+  // Right under the score, for someone who finished a scoring run without a nickname.
+  function showPostPrompt() {
+    const ask = web && !nick && score > 0;
+    $('postPrompt').hidden = !ask;
+    if (web) $('nickFormOver').hidden = ask; // one nickname box at a time
+    const best = modeBest(); // the board takes your best run, which may not be this one
+    if (ask) $('postPromptTitle').textContent = `Post your ${score >= best ? score : 'best of ' + best} to the ${mode === 'daily' ? 'Daily' : 'Endless'} leaderboard`;
+  }
+
+  for (const [formId, inputId] of [['nickFormMenu', 'nickMenu'], ['nickFormOver', 'nickOver'], ['nickFormPrompt', 'nickPrompt']]) {
     $(formId).addEventListener('submit', e => {
       e.preventDefault();
       const v = $(inputId).value.trim().replace(/\s+/g, ' ');
       if (!NICK_RE.test(v)) { toast("Use 1 to 20 letters, numbers, spaces or . _ ' -"); return; }
       nick = v; store.set('comethop-nick', nick);
-      for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
+      for (const id of ['nickMenu', 'nickOver', 'nickPrompt']) $(id).value = nick;
       $(inputId).blur();
+      showPostPrompt();
       const hasRun = (dailyLocal.run && dailyLocal.run.score) || (endlessRun && endlessRun.score);
       toast(hasRun ? `Posting your best as ${nick}` : `Saved. Your best runs will post as ${nick}`);
       renderBoards(); postBest('daily'); postBest('endless');
