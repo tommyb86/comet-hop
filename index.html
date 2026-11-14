@@ -1,0 +1,1392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A one-tap mobile game: slingshot a comet between planets.">
+<style>body{margin:0}img{max-width:100%}</style>
+<title>Comet Hop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;800&family=IBM+Plex+Mono:wght@400;600&display=swap">
+</head>
+<body>
+<style>
+/* Layout: full-bleed canvas night sky, HUD pinned to the safe-area edges, one scrollable glass panel for menus. Single deliberate dark look. */
+:root {
+  --void: #090a1c;
+  --deep: #141238;
+  --text: #f2eefc;
+  --muted: #9a94c4;
+  --comet: #ffd27a;
+  --rose: #ff6f91;
+  --ice: #8fdcff;
+  --violet: #c9a8ff;
+  --glass: rgba(20, 18, 56, 0.78);
+  --line: rgba(190, 180, 255, 0.18);
+  --tint: rgba(255, 255, 255, 0.04);
+  --display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--mono);
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+canvas#game { position: fixed; inset: 0; display: block; }
+button { font-family: inherit; }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--comet); outline-offset: 3px; }
+
+.hud {
+  position: fixed; inset: 0 0 auto 0;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: start;
+  pointer-events: none;
+}
+.hud .best { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); padding-top: 8px; font-variant-numeric: tabular-nums; display: grid; gap: 4px; }
+.hud .best b { color: var(--ice); font-weight: 600; }
+.hud .center { display: grid; justify-items: center; gap: 2px; }
+#score { font-family: var(--display); font-weight: 800; font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; text-shadow: 0 0 24px rgba(255, 210, 122, .35); }
+#powers { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 46vw; }
+.pw { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; background: var(--glass); font-variant-numeric: tabular-nums; }
+.pw.shield { color: var(--ice); }
+.pw.slow { color: var(--violet); }
+.pw.magnet { color: var(--rose); }
+#ghostHud { color: var(--text); }
+#ghostHud.behind { color: var(--rose); }
+#streak { font-size: 12px; letter-spacing: .12em; color: var(--comet); min-height: 1.3em; text-transform: uppercase; }
+.hud .right { justify-self: end; }
+#mute {
+  pointer-events: auto; appearance: none; border: 1px solid var(--line); background: var(--glass);
+  color: var(--text); font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  padding: 8px 10px; border-radius: 999px; cursor: pointer;
+}
+
+#banner {
+  position: fixed; left: 0; right: 0; top: 26%; text-align: center; pointer-events: none;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 6px; justify-items: center;
+  opacity: 0; transform: translateY(8px); transition: opacity .35s, transform .35s;
+}
+#banner.show { opacity: 1; transform: none; }
+#banner .t { font: 800 26px var(--display); color: var(--rose); text-shadow: 0 0 30px rgba(255, 111, 145, .5); text-wrap: balance; }
+#banner .s { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--text); }
+
+.overlay {
+  position: fixed; inset: 0; display: flex; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(env(safe-area-inset-top, 0px) + 64px) calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+.panel {
+  margin: auto; width: min(380px, 100%);
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 24px 22px 20px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  display: grid; gap: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .45);
+  animation: rise .5s cubic-bezier(.2, .9, .3, 1.2) both;
+}
+@keyframes rise { from { transform: translateY(14px) scale(.97); opacity: .4; } }
+.eyebrow, .label { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--ice); }
+.label { color: var(--muted); letter-spacing: .14em; display: flex; justify-content: space-between; gap: 8px; }
+.label span { color: var(--text); letter-spacing: .06em; }
+.panel h1, .panel h2 { margin: 0; font-family: var(--display); font-weight: 800; line-height: .95; text-wrap: balance; }
+.panel h1 { font-size: 44px; letter-spacing: -.02em; }
+.panel h1 span { color: var(--comet); }
+.panel h2 { font-size: 28px; }
+
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: var(--tint); border: 1px solid var(--line); }
+.seg button {
+  appearance: none; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font: 600 13px var(--mono); padding: 9px 6px; border-radius: 10px; display: grid; gap: 2px; justify-items: center;
+}
+.seg button small { font-size: 10px; letter-spacing: .08em; font-weight: 400; }
+.seg button[aria-selected="true"] { background: var(--deep); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.modeNote { margin: -6px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
+
+.skins { display: grid; gap: 10px; }
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.sw {
+  appearance: none; border: 1px solid var(--line); background: var(--tint); cursor: pointer; border-radius: 12px;
+  aspect-ratio: 1; max-width: 100%; display: grid; place-items: center; position: relative; padding: 0; color: var(--muted);
+}
+.sw i { width: 46%; aspect-ratio: 1; border-radius: 50%; display: block; }
+.sw[aria-pressed="true"] { border-color: var(--comet); box-shadow: 0 0 0 1px var(--comet), 0 0 18px rgba(255, 210, 122, .25); }
+.sw.locked i { filter: grayscale(1) brightness(.45); }
+.sw.locked::after { content: attr(data-need); position: absolute; inset: auto 0 4px; font-size: 9px; letter-spacing: .04em; text-align: center; color: var(--muted); }
+.sw.fresh::before { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--rose); }
+
+.panel button.go {
+  appearance: none; border: 0; cursor: pointer;
+  background: var(--comet); color: #241a05;
+  font: 800 15px var(--display); letter-spacing: .04em;
+  padding: 15px 18px; border-radius: 14px;
+  box-shadow: 0 0 0 0 rgba(255, 210, 122, .5);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(255, 210, 122, 0); } }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ghost {
+  appearance: none; cursor: pointer; border: 1px solid var(--line); background: var(--tint); color: var(--text);
+  font: 600 12px var(--mono); letter-spacing: .06em; padding: 12px 10px; border-radius: 12px;
+}
+.ghost:hover { background: rgba(255, 255, 255, .08); }
+
+.board { display: grid; gap: 8px; }
+.board ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.board li {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: baseline;
+  padding: 7px 10px; border-radius: 10px; font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.board li:nth-child(odd) { background: var(--tint); }
+.board li .rk { color: var(--muted); font-size: 11px; }
+.board li .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board li .sc { font: 800 13px var(--display); }
+.board li.me { background: rgba(255, 210, 122, .12); box-shadow: inset 0 0 0 1px rgba(255, 210, 122, .35); }
+.board li.me .nm { color: var(--comet); }
+.board li.gapRow { background: none; color: var(--muted); padding-block: 0; }
+.boardNote { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
+
+details { border-top: 1px solid var(--line); padding-top: 12px; }
+summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.rules { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; font-size: 13px; line-height: 1.45; }
+.rules li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
+.rules b { color: var(--comet); font-weight: 600; }
+.rules .k { color: var(--muted); font-size: 11px; padding-top: 2px; }
+
+.foot { font-size: 11px; color: var(--muted); letter-spacing: .08em; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { display: grid; gap: 4px; padding: 10px; border-radius: 12px; background: var(--tint); border: 1px solid var(--line); min-width: 0; }
+.stat .l { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font: 800 22px var(--display); font-variant-numeric: tabular-nums; }
+.reason { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #241a05; background: var(--comet); padding: 4px 9px; border-radius: 999px; font-weight: 600; }
+.chip.alt { background: var(--ice); }
+.chip.rose { background: var(--rose); color: #2a0612; }
+#copyBox { width: 100%; min-height: 110px; resize: none; background: var(--deep); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: 12px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
+
+#toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); transform: translate(-50%, 20px);
+  background: var(--deep); border: 1px solid var(--line); color: var(--text); padding: 10px 14px; border-radius: 999px;
+  font-size: 12px; letter-spacing: .06em; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; max-width: calc(100% - 32px);
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel, .panel button.go { animation: none; }
+  #banner, #toast { transition: none; }
+}
+</style>
+
+<canvas id="game" aria-label="Comet Hop game field"></canvas>
+
+<div class="hud">
+  <div class="best"><span id="bestHud">Best 0</span><b id="modeHud"></b><b id="ghostHud"></b></div>
+  <div class="center">
+    <div id="score" aria-live="polite">0</div>
+    <div id="streak"></div>
+    <div id="powers"></div>
+  </div>
+  <div class="right"><button id="mute" type="button" aria-pressed="false">Sound on</button></div>
+</div>
+
+<div id="banner" aria-live="polite"><div class="t" id="bannerT"></div><div class="s" id="bannerS"></div></div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <div class="eyebrow">One-tap orbital hopper</div>
+    <h1>Comet<br><span>Hop</span></h1>
+
+    <div class="seg" role="tablist" aria-label="Game mode">
+      <button type="button" role="tab" id="modeEndless" aria-selected="true">Endless<small>New sky every run</small></button>
+      <button type="button" role="tab" id="modeDaily" aria-selected="false">Daily<small id="dailyDate"></small></button>
+    </div>
+    <p class="modeNote" id="modeNote"></p>
+
+    <div class="skins">
+      <div class="label">Comet <span id="skinName"></span></div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <button class="go" id="startBtn" type="button">Launch</button>
+
+    <section class="board" id="boardMenuWrap" hidden>
+      <div class="label">Today's leaderboard <span id="boardCountMenu"></span></div>
+      <ol id="boardMenu"></ol>
+      <p class="boardNote" id="boardNoteMenu"></p>
+    </section>
+
+    <details id="howto">
+      <summary>How to play</summary>
+      <ul class="rules">
+        <li><span class="k">01</span><span><b>Tap</b> to break orbit. You fly off along the dotted line.</span></li>
+        <li><span class="k">02</span><span>Cross a planet's dashed ring and its gravity catches you.</span></li>
+        <li><span class="k">03</span><span>Aim straight at the planet for a <b>Bullseye</b>. Chain them to multiply.</span></li>
+        <li><span class="k">04</span><span>Orbits decay. Leave before you burn up.</span></li>
+        <li><span class="k">05</span><span>Grab power-ups: <b>Shield</b> survives one crash, <b>Slow-mo</b> halves time for 6s, <b>Magnet</b> pulls in stardust and widens rings for 10s.</span></li>
+        <li><span class="k">06</span><span>Every 25th planet is a <b>boss</b> ringed by moons. Land on it for +10.</span></li>
+        <li><span class="k">07</span><span>Deep space has <b>asteroids</b> past planet 40 and <b>black holes</b> past planet 60.</span></li>
+      </ul>
+    </details>
+    <div class="foot"><span id="bestMenu">Best 0</span><span>Tap, click or Space</span></div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <div class="eyebrow" id="overEyebrow">Signal lost</div>
+    <h2 id="overTitle">Burned up</h2>
+    <div class="chips" id="chips"></div>
+    <p class="reason" id="overReason"></p>
+    <div class="stats">
+      <div class="stat"><span class="l">Score</span><span class="v" id="sScore">0</span></div>
+      <div class="stat"><span class="l">Hops</span><span class="v" id="sHops">0</span></div>
+      <div class="stat"><span class="l">Bullseyes</span><span class="v" id="sBulls">0</span></div>
+    </div>
+    <button class="go" id="againBtn" type="button">Fly again</button>
+    <div class="row">
+      <button class="ghost" id="copyBtn" type="button">Copy result</button>
+      <button class="ghost" id="cardBtn" type="button" hidden>Save card</button>
+      <button class="ghost" id="menuBtn" type="button">Menu</button>
+    </div>
+    <textarea id="copyBox" readonly hidden aria-label="Result text to copy"></textarea>
+
+    <section class="board" id="boardOverWrap" hidden>
+      <div class="label">Today's leaderboard <span id="boardCountOver"></span></div>
+      <ol id="boardOver"></ol>
+      <p class="boardNote" id="boardNoteOver"></p>
+    </section>
+    <div class="foot"><span id="bestOver">Best 0</span><span>Furthest: <span id="sDist">0</span> AU</span></div>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script>
+(() => {
+  const cv = document.getElementById('game');
+  const ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const TAU = Math.PI * 2;
+  const TODAY = new Date().toISOString().slice(0, 10); // UTC day, so everyone shares one daily sky
+
+  // Level RNG: seeded in Daily mode so everyone flies the same sky
+  function mulberry32(a) {
+    return () => {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function hashStr(s) { let h = 2166136261; for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  let lrng = Math.random;
+  const lr = (a, b) => a + lrng() * (b - a);
+
+  const PAL = [
+    ['#ffb88f', '#b8335f'], ['#9fe6ff', '#2a56c9'], ['#d9b8ff', '#5f35b8'],
+    ['#ffe18f', '#cf6a22'], ['#aef2d4', '#1a7f72'], ['#ffa3c4', '#8e2865'],
+  ];
+
+  // Unlockable comets, earned by all-time best score
+  const SKINS = [
+    { id: 'ember', name: 'Ember', need: 0, head: '#ffd27a', core: '#fffaf0',
+      trail: k => `rgba(255, ${170 + 60 * k | 0}, ${90 + 60 * k | 0}, ${k * 0.55})`, swatch: 'radial-gradient(circle at 35% 35%, #fffaf0, #ffd27a 45%, #ff8a4a)' },
+    { id: 'ice', name: 'Ice Wake', need: 25, head: '#8fdcff', core: '#f2fbff',
+      trail: k => `rgba(${110 + 60 * k | 0}, ${200 + 40 * k | 0}, 255, ${k * 0.55})`, swatch: 'radial-gradient(circle at 35% 35%, #f2fbff, #8fdcff 45%, #2a6fd0)' },
+    { id: 'rose', name: 'Rose Nova', need: 50, head: '#ff8fb0', core: '#fff0f5',
+      trail: k => `rgba(255, ${90 + 70 * k | 0}, ${140 + 40 * k | 0}, ${k * 0.55})`, swatch: 'radial-gradient(circle at 35% 35%, #fff0f5, #ff8fb0 45%, #c22d64)' },
+    { id: 'aurora', name: 'Aurora', need: 100, head: '#9fffd8', core: '#ffffff',
+      trail: (k, i) => `hsla(${(t * 140 + i * 14) % 360 | 0}, 95%, 66%, ${k * 0.6})`, swatch: 'conic-gradient(#ff6f91, #ffd27a, #9fffd8, #8fdcff, #c9a8ff, #ff6f91)' },
+    { id: 'void', name: 'Void Silk', need: 150, head: '#c9a8ff', core: '#ffffff',
+      trail: (k, i) => i % 2 ? `rgba(255, 255, 255, ${k * 0.5})` : `rgba(150, 100, 255, ${k * 0.6})`, swatch: 'radial-gradient(circle at 35% 35%, #ffffff, #c9a8ff 40%, #3a1d8a)' },
+    { id: 'nova', name: 'Supernova', need: 250, head: '#fff1b8', core: '#ffffff', sparks: true,
+      trail: k => `rgba(255, ${235 + 20 * k | 0}, ${180 + 70 * k | 0}, ${k * 0.65})`, swatch: 'radial-gradient(circle at 50% 50%, #ffffff, #fff1b8 30%, #ff9a3c 60%, #ff3c7a)' },
+  ];
+
+  // ---------- storage (per-device conveniences) ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  let bestEndless = 0;
+  try { bestEndless = parseInt(localStorage.getItem('comethop-best') || '0', 10) || 0; } catch (e) {}
+  let dailyLocal = store.get('comethop-daily', null);
+  if (!dailyLocal || dailyLocal.day !== TODAY) dailyLocal = { day: TODAY, best: 0 };
+  let topScore = Math.max(store.get('comethop-top', 0) || 0, bestEndless);
+  let seenUnlocks = store.get('comethop-seen', null) || SKINS.filter(s => s.need <= topScore).map(s => s.id);
+  let skinId = store.get('comethop-skin', 'ember');
+  let mode = store.get('comethop-mode', 'endless') === 'daily' ? 'daily' : 'endless';
+  const skinOf = id => SKINS.find(s => s.id === id) || SKINS[0];
+  if (skinOf(skinId).need > topScore) skinId = 'ember';
+  let skin = skinOf(skinId);
+
+  function modeBest() { return mode === 'daily' ? dailyLocal.best : bestEndless; }
+  function saveBests() {
+    try { localStorage.setItem('comethop-best', String(bestEndless)); } catch (e) {}
+    store.set('comethop-daily', dailyLocal);
+    store.set('comethop-top', topScore);
+  }
+
+  let W = 0, H = 0, DPR = 1, FW = 0, FX = 0;
+  let sky = [];
+  function resize() {
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    FW = Math.min(W, 520); FX = (W - FW) / 2;
+    sky = [];
+    const n = Math.round((W * H) / 2600);
+    for (let i = 0; i < n; i++) {
+      const d = Math.random();
+      sky.push({ x: Math.random() * W, y: Math.random() * H, d: 0.05 + d * 0.35, s: 0.4 + d * 1.4, tw: rand(0, TAU) });
+    }
+    for (const p of planets) placePlanet(p);
+  }
+
+  // ---------- audio ----------
+  let actx = null, muted = store.get('comethop-muted', false) === true;
+  try { if (localStorage.getItem('comethop-muted') === '1') muted = true; } catch (e) {}
+  function ensureAudio() {
+    if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+    if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  }
+  function tone(freq, dur, type = 'sine', vol = 0.18, slide = 1, delay = 0) {
+    if (!actx || muted) return;
+    const now = actx.currentTime + delay;
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, now);
+    if (slide !== 1) o.frequency.exponentialRampToValueAtTime(freq * slide, now + dur);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    o.connect(g).connect(actx.destination);
+    o.start(now); o.stop(now + dur + 0.05);
+  }
+  function whoosh(dur = 0.35, vol = 0.12, f0 = 600, f1 = 2400) {
+    if (!actx || muted) return;
+    const now = actx.currentTime;
+    const len = Math.floor(actx.sampleRate * dur);
+    const buf = actx.createBuffer(1, len, actx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf;
+    const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.2;
+    f.frequency.setValueAtTime(f0, now); f.frequency.exponentialRampToValueAtTime(f1, now + dur);
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(f).connect(g).connect(actx.destination);
+    src.start(now);
+  }
+  const SCALE = [0, 2, 4, 7, 9];
+  function hopNote(n) {
+    const oct = Math.floor(n / SCALE.length) % 3;
+    const semi = SCALE[n % SCALE.length] + oct * 12;
+    return 392 * Math.pow(2, semi / 12);
+  }
+  function buzz(ms) { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} }
+
+  const muteBtn = $('mute');
+  function renderMute() {
+    muteBtn.textContent = muted ? 'Sound off' : 'Sound on';
+    muteBtn.setAttribute('aria-pressed', String(muted));
+  }
+  renderMute();
+  muteBtn.addEventListener('pointerdown', e => e.stopPropagation());
+  muteBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    muted = !muted; renderMute();
+    store.set('comethop-muted', muted);
+    if (!muted) { ensureAudio(); tone(660, 0.15, 'triangle', 0.12); }
+  });
+
+  // ---------- toast & banner ----------
+  let toastTimer = 0, bannerTimer = 0;
+  function toast(msg) {
+    const el = $('toast'); el.textContent = msg; el.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+  function banner(title, sub) {
+    $('bannerT').textContent = title; $('bannerS').textContent = sub;
+    const el = $('banner'); el.classList.add('show');
+    clearTimeout(bannerTimer); bannerTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  // ---------- game state ----------
+  let state = 'ready'; // ready | play | over
+  let planets = [], stars = [], hazards = [], parts = [], pops = [], trail = [];
+  let comet, camY = 0, t = 0, shake = 0, overAt = 0;
+  let score = 0, hops = 0, bulls = 0, combo = 0, chain = 0, maxCombo = 0;
+  let hist = [], path = [], sectorShown = 0, deathKind = '';
+  let pickups = [], rt = 0, invuln = 0, rec = [];
+  const powers = { shield: false, slow: 0, magnet: 0 };
+  // Ghost of today's best Daily run, sampled 15 times per second of run time
+  let ghost = store.get('comethop-ghost', null);
+  if (!ghost || ghost.day !== TODAY || !Array.isArray(ghost.pts) || ghost.pts.length < 2) ghost = null;
+
+  function placePlanet(p) {
+    const m = p.r + 26;
+    p.bx = m + p.fx * (FW - 2 * m);
+    const room = Math.min(p.bx - m, FW - m - p.bx);
+    p.amp = p.ampF ? Math.min(p.ampF * FW, room) : 0;
+    if (p.amp < 16) p.amp = 0;
+    p.x = p.bx;
+  }
+
+  function spawnPlanet() {
+    const prev = planets[planets.length - 1];
+    const idx = prev ? prev.idx + 1 : 0;
+    const boss = idx > 0 && idx % 25 === 0;
+    const nearBoss = boss || !!(prev && prev.boss);
+    const r = boss ? 46 : idx === 0 ? 30 : lr(16, 29) - Math.min(6, idx * 0.1);
+    let gap = lr(170, 240);
+    if (nearBoss) gap = 300; // room for the moon ring
+    const y = prev ? prev.y - gap : 0;
+    let fx = 0.5;
+    if (prev && !boss) {
+      for (let k = 0; k < 16; k++) {
+        fx = lrng();
+        const d = Math.abs(fx - prev.fx);
+        if (d > 0.14 && d < 0.75) break;
+      }
+    }
+    const pal = PAL[(idx * 4 + (lrng() < 0.5 ? 0 : 1)) % PAL.length];
+    const ring = idx > 0 && lrng() < 0.28, tilt = lr(-0.6, 0.6), bands = lrng() < 0.5;
+    const mv = lrng(), a1 = lrng(), a2 = lrng(), a3 = lrng();
+    const p = {
+      idx, fx, r, y, bx: 0, x: 0, amp: 0, ampF: 0, sp: 0, ph: 0, flash: 0, boss, moons: [],
+      cap: r + Math.max(36, 58 - Math.max(0, idx - 30) * 0.25), pal, ring, tilt, bands,
+    };
+    if (boss) {
+      p.cap = r + 66;
+      const n = Math.min(6, 2 + (idx / 25 | 0));
+      const dir = a1 < 0.5 ? 1 : -1, base = a2 * TAU;
+      for (let k = 0; k < n; k++) p.moons.push({ a: base + k * TAU / n, rr: r + 100, sp: dir * (0.7 + Math.min(0.6, idx / 250)), r: 9, x: 0, y: 0 });
+    } else if (idx > 9 && mv < Math.min(0.65, (idx - 9) * 0.05)) {
+      p.ampF = 0.06 + a1 * 0.12;
+      p.sp = 0.6 + a2 * (0.6 + Math.min(0.8, idx * 0.02));
+      p.ph = a3 * TAU;
+    }
+    placePlanet(p);
+    planets.push(p);
+
+    if (prev && idx > 1 && !nearBoss) {
+      const h = lrng(), hx = lrng(), hy = lrng(), hs = lrng(), hp = lrng(), pk = lrng(), pkk = lrng();
+      const my = (prev.y + y) / 2;
+      if (idx >= 60 && gap >= 190 && h < 0.32) {
+        hazards.push({ kind: 'hole', fx: 0.12 + hx * 0.76, y: my, r: 11, x: 0, spin: hp * TAU });
+      } else if (idx >= 40 && gap >= 180 && h < Math.min(0.6, 0.3 + (idx - 40) * 0.01)) {
+        hazards.push({ kind: 'rock', y: my, r: 8 + hs * 5, sp: 0.5 + hs * 0.9, ph: hp * TAU, ampF: 0.7 + hx * 0.3, x: 0, rot: hp * 6, seed: hy });
+      } else if (idx >= 5 && pk < 0.17) {
+        pickups.push({ kind: ['shield', 'slow', 'magnet'][pkk * 3 | 0], fx: clamp((prev.fx + fx) / 2 + (hx - 0.5) * 0.3, 0.06, 0.94), y: my + (hy - 0.5) * 30, got: false, x: 0, ph: hp * TAU });
+      } else if (h < 0.75) {
+        stars.push({ fx: clamp((prev.fx + fx) / 2 + (hx - 0.5) * 0.3, 0.04, 0.96), y: my + (hy - 0.5) * 40, got: false, ph: hp * TAU, x: 0 });
+      }
+    }
+  }
+
+  function reset() {
+    lrng = mode === 'daily' ? mulberry32(hashStr('comet-hop-' + TODAY)) : Math.random;
+    planets = []; stars = []; hazards = []; pickups = []; parts = []; pops = []; trail = [];
+    rt = 0; invuln = 0; rec = []; powers.shield = false; powers.slow = 0; powers.magnet = 0;
+    score = 0; hops = 0; bulls = 0; combo = 0; chain = 0; maxCombo = 0; shake = 0;
+    hist = []; sectorShown = 0; deathKind = '';
+    spawnPlanet();
+    const p = planets[0];
+    path = [{ x: p.fx, y: p.y, k: 's' }];
+    comet = { mode: 'orbit', planet: p, from: null, ang: -Math.PI / 2, dir: 1, dist: p.r + 42, orbitR: p.r + 42, x: 0, y: 0, vx: 0, vy: 0, speed: 0, flyT: 0 };
+    camY = p.y - H * 0.62;
+    while (planets[planets.length - 1].y > camY - H) spawnPlanet();
+    updateHud();
+  }
+
+  const orbitW = () => 2.3 + Math.min(1.7, hops * 0.035);
+  const decayRate = () => Math.min(15, 3.2 + Math.min(9, hops * 0.22) + Math.max(0, hops - 50) * 0.06);
+  const launchSpeed = () => 440 + Math.min(220, hops * 4);
+
+  function launch() {
+    if (comet.mode !== 'orbit') return;
+    const s = launchSpeed();
+    const tx = -Math.sin(comet.ang) * comet.dir, ty = Math.cos(comet.ang) * comet.dir;
+    comet.vx = tx * s; comet.vy = ty * s; comet.speed = s;
+    comet.from = comet.planet; comet.planet = null;
+    comet.mode = 'fly'; comet.flyT = 0;
+    whoosh(0.32, 0.1, 500, 2600);
+    tone(220, 0.18, 'triangle', 0.06, 2);
+    burst(comet.x, comet.y, 10, skin.head, 120, 0.4);
+  }
+
+  function capture(p) {
+    const rx = comet.x - p.x, ry = comet.y - p.y;
+    const cross = rx * comet.vy - ry * comet.vx;
+    const impact = Math.abs(cross) / comet.speed;
+    comet.mode = 'orbit'; comet.planet = p;
+    comet.ang = Math.atan2(ry, rx);
+    comet.dir = cross >= 0 ? 1 : -1;
+    comet.dist = Math.hypot(rx, ry);
+    comet.orbitR = p.r + 42;
+    p.flash = 1;
+    const skipped = Math.max(0, p.idx - comet.from.idx - 1);
+    const isBull = impact < p.r * 0.85 + 6;
+    hops++; chain++;
+    let gain = 1;
+    const label = [];
+    if (isBull) {
+      combo++; bulls++; maxCombo = Math.max(maxCombo, combo);
+      gain += combo;
+      label.push(combo > 1 ? `Bullseye ×${combo}` : 'Bullseye');
+    } else combo = 0;
+    if (skipped > 0) { gain += skipped * 2; label.push(`Skip +${skipped * 2}`); }
+    if (p.boss) { gain += 10; label.push('Boss cleared +10'); }
+    score += gain;
+    hist.push(skipped > 0 ? 'k' : isBull ? 'b' : 'h');
+    path.push({ x: p.fx, y: p.y, k: skipped > 0 ? 'k' : isBull ? 'b' : 'h' });
+    popText(p.x, p.y - p.r - 18, `+${gain}`, isBull ? '#ffd27a' : '#f2eefc', 1.1);
+    if (label.length) popText(p.x, p.y - p.r - 42, label.join(' · '), isBull ? '#ffd27a' : '#8fdcff', 0.8);
+
+    const f = hopNote(chain - 1);
+    tone(f, 0.35, 'sine', 0.16);
+    tone(f * 2, 0.25, 'triangle', 0.05, 1, 0.02);
+    if (isBull) { tone(f * 1.5, 0.4, 'sine', 0.1, 1, 0.07); buzz(18); } else buzz(8);
+    burst(comet.x, comet.y, isBull ? 26 : 14, isBull ? skin.head : p.pal[0], isBull ? 220 : 140, 0.6);
+
+    if (p.boss) { tone(523, 0.2, 'triangle', 0.1, 1, 0.15); tone(659, 0.2, 'triangle', 0.1, 1, 0.27); tone(784, 0.5, 'triangle', 0.12, 1, 0.39); burst(p.x, p.y, 50, '#ffd27a', 300, 1); }
+    if ((p.idx + 1) % 25 === 0) banner('Boss planet ahead', 'Slip between its moons to land. +10 if you make it');
+    else if (p.idx >= 60 && sectorShown < 2) { sectorShown = 2; banner('Black holes ahead', 'They bend your path. Touch the dark and you are gone'); tone(98, 0.9, 'sawtooth', 0.06, 0.5); }
+    else if (p.idx >= 38 && sectorShown < 1) { sectorShown = 1; banner('Asteroid belt', 'Rocks sweep the gaps. Time your launch'); tone(130, 0.7, 'square', 0.04, 0.6); }
+    updateHud();
+  }
+
+  const REASONS = {
+    burn: ['Orbit decayed', 'Burned up', 'You stayed in orbit too long and spiralled into the atmosphere. Leave sooner as orbits speed up.'],
+    drift: ['Signal lost', 'Lost to the deep', 'You missed every gravity well and drifted into empty space. The dotted line shows your launch path.'],
+    rock: ['Impact', 'Hit an asteroid', 'A rock crossed your flight path. Wait for the gap to clear before you launch.'],
+    moon: ['Moon strike', 'Clipped a moon', 'Boss planets are guarded by moons. Wait for a gap in the ring before you fly through.'],
+    hole: ['Event horizon', 'Swallowed whole', 'A black hole pulled you in. Launch wide of it, or use its pull to curve onto the next planet.'],
+  };
+
+  function die(kind) {
+    if (state !== 'play') return;
+    if (powers.shield) { useShield(kind); return; }
+    state = 'over'; overAt = performance.now(); deathKind = kind;
+    shake = reduceMotion ? 0 : 14;
+    comet.mode = 'dead';
+    path.push({ x: clamp(comet.x / FW, 0, 1), y: comet.y, k: 'x' });
+    burst(comet.x, comet.y, 60, kind === 'hole' ? '#c9a8ff' : '#ff6f91', 320, 1.1);
+    burst(comet.x, comet.y, 30, skin.head, 200, 0.9);
+    tone(140, 0.6, 'sawtooth', 0.12, 0.3);
+    whoosh(0.6, 0.14, 1800, 200);
+    buzz([30, 40, 60]);
+
+    const chips = [];
+    const prevBest = modeBest();
+    if (score > prevBest && score > 0) chips.push(['New best', '']);
+    if (mode === 'daily') { dailyLocal.best = Math.max(dailyLocal.best, score); }
+    else bestEndless = Math.max(bestEndless, score);
+    const prevTop = topScore;
+    topScore = Math.max(topScore, score);
+    for (const s of SKINS) if (s.need > prevTop && s.need <= topScore) chips.push([`Unlocked ${s.name}`, 'alt']);
+    saveBests();
+    if (mode === 'daily') submitDaily();
+    if (mode === 'daily' && rec.length > 5 && (!ghost || score > ghost.score)) {
+      rec.push([Math.round(comet.x / FW * 1000), Math.round(comet.y), score]);
+      ghost = { day: TODAY, score, pts: rec };
+      store.set('comethop-ghost', ghost);
+      chips.push(['Ghost saved', 'rose']);
+    }
+
+    setTimeout(() => {
+      const [eb, title, reason] = REASONS[kind];
+      $('overEyebrow').textContent = (mode === 'daily' ? `Daily ${TODAY} · ` : '') + eb;
+      $('overTitle').textContent = title;
+      $('overReason').textContent = reason;
+      $('sScore').textContent = score; $('sHops').textContent = hops; $('sBulls').textContent = bulls;
+      $('sDist').textContent = (Math.max(0, -comet.y) / 100).toFixed(1);
+      const ch = $('chips'); ch.textContent = '';
+      for (const [txt, cls] of chips) { const s = document.createElement('span'); s.className = 'chip' + (cls ? ' ' + cls : ''); s.textContent = txt; ch.appendChild(s); }
+      ch.hidden = !chips.length;
+      $('copyBox').hidden = true;
+      $('boardOverWrap').hidden = mode !== 'daily';
+      updateHud(); renderSkins(); renderBoards();
+      $('over').hidden = false;
+    }, 650);
+  }
+
+  function burst(x, y, n, color, spd, life) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, TAU), s = rand(0.2, 1) * spd;
+      parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.5, 1) * life, max: life, color, size: rand(1, 3) });
+    }
+  }
+  function popText(x, y, text, color, life) { pops.push({ x, y, text, color, life, max: life }); }
+
+  function updateHud() {
+    $('score').textContent = score;
+    $('streak').textContent = combo > 1 ? `Bullseye chain ×${combo}` : (combo === 1 ? 'Bullseye' : '');
+    const b = `Best ${modeBest()}`;
+    $('bestHud').textContent = b; $('bestMenu').textContent = (mode === 'daily' ? "Today's best " : 'Best ') + modeBest(); $('bestOver').textContent = b;
+    $('modeHud').textContent = mode === 'daily' ? `Daily ${TODAY.slice(5)}` : '';
+  }
+
+  // ---------- menu: modes & skins ----------
+  $('dailyDate').textContent = 'Same sky for all · ' + TODAY.slice(5);
+  function renderMode() {
+    $('modeEndless').setAttribute('aria-selected', String(mode === 'endless'));
+    $('modeDaily').setAttribute('aria-selected', String(mode === 'daily'));
+    $('modeNote').textContent = mode === 'daily'
+      ? `Everyone gets the same planets today (UTC). Your best run counts, and a ghost of it flies with you next time. A new sky arrives at midnight UTC.`
+      : 'A fresh random sky every run. Your best score unlocks new comets.';
+    $('boardMenuWrap').hidden = mode !== 'daily';
+    updateHud();
+  }
+  function setMode(m) {
+    if (m === mode) return;
+    mode = m; store.set('comethop-mode', mode);
+    renderMode(); reset(); renderBoards();
+  }
+  $('modeEndless').addEventListener('click', () => setMode('endless'));
+  $('modeDaily').addEventListener('click', () => setMode('daily'));
+
+  function renderSkins() {
+    const box = $('swatches'); box.textContent = '';
+    for (const s of SKINS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'sw';
+      const locked = s.need > topScore;
+      if (locked) { b.classList.add('locked'); b.dataset.need = s.need; }
+      if (!locked && !seenUnlocks.includes(s.id)) b.classList.add('fresh');
+      b.setAttribute('aria-pressed', String(s.id === skinId));
+      b.setAttribute('aria-label', locked ? `${s.name}, unlocks at a best of ${s.need}` : s.name);
+      b.title = locked ? `${s.name}: reach ${s.need} to unlock` : s.name;
+      const i = document.createElement('i'); i.style.background = s.swatch; b.appendChild(i);
+      b.addEventListener('click', () => {
+        if (locked) { toast(`${s.name} unlocks at a best score of ${s.need}`); return; }
+        skinId = s.id; skin = s; store.set('comethop-skin', skinId);
+        if (!seenUnlocks.includes(s.id)) { seenUnlocks.push(s.id); store.set('comethop-seen', seenUnlocks); }
+        renderSkins();
+        ensureAudio(); tone(880, 0.12, 'triangle', 0.08);
+      });
+      box.appendChild(b);
+    }
+    $('skinName').textContent = skin.name;
+  }
+
+  // ---------- shared daily leaderboard ----------
+  let db = null, userApi = null, downloads = null, uid = null, myDaily = null;
+  let boardRows = [], boardState = 'loading', canWrite = true, writing = Promise.resolve();
+
+  async function initCaps() {
+    const cl = window.claude;
+    if (!cl || typeof cl.use !== 'function') { boardState = 'off'; renderBoards(); return; }
+    const [d, u, dl] = await Promise.all([
+      cl.use('db').catch(() => null), cl.use('user').catch(() => null), cl.use('downloads').catch(() => null),
+    ]);
+    db = d; userApi = u; downloads = dl;
+    $('cardBtn').hidden = !downloads;
+    if (!db) { boardState = 'off'; renderBoards(); return; }
+    if (userApi) {
+      try { uid = await userApi.id(); } catch (e) { uid = null; }
+      try { if (await userApi.can('data.write') === false) canWrite = false; } catch (e) {}
+    }
+    if (!uid) canWrite = false;
+    if (uid) {
+      try {
+        const snap = await db.doc('daily/' + uid).get();
+        const data = snap.exists ? snap.data() : null;
+        if (data && data.day === TODAY) myDaily = data;
+      } catch (e) {}
+      if (dailyLocal.best > ((myDaily && myDaily.score) || 0) && mode === 'daily') {/* local runs before sign-in stay local */}
+    }
+    try {
+      db.collection('daily').where('day', '==', TODAY).orderBy('score', 'desc').limit(50).onSnapshot(s => {
+        boardRows = s.docs.filter(x => x.exists).map(x => ({ id: x.id, ...x.data() }));
+        boardState = 'ok'; renderBoards();
+      }, () => { boardState = 'off'; renderBoards(); });
+    } catch (e) { boardState = 'off'; renderBoards(); }
+  }
+
+  function submitDaily() {
+    if (!db || !uid || !canWrite) return;
+    if (myDaily && myDaily.day === TODAY && myDaily.score >= score) return;
+    const body = { day: TODAY, score, hops, bulls, chain: maxCombo, skin: skinId, at: new Date().toISOString() };
+    myDaily = body;
+    writing = writing.then(() => db.doc('daily/' + uid).set(body)).catch(e => {
+      if (e && e.code === 'invalid_argument') { canWrite = false; renderBoards(); }
+      else if (e && e.code === 'quota_exceeded') toast('The leaderboard is full, so this score stays on your device.');
+    });
+  }
+
+  let renderSeq = 0;
+  async function renderBoards() {
+    const seq = ++renderSeq;
+    let names = {};
+    if (userApi && boardRows.length) {
+      try { names = await userApi.profiles(boardRows.map(r => r.id)); } catch (e) { names = {}; }
+    }
+    if (seq !== renderSeq) return;
+    for (const [listId, noteId, countId] of [['boardMenu', 'boardNoteMenu', 'boardCountMenu'], ['boardOver', 'boardNoteOver', 'boardCountOver']]) {
+      const ol = $(listId); ol.textContent = '';
+      const note = $(noteId);
+      $(countId).textContent = boardRows.length ? `${boardRows.length} pilot${boardRows.length === 1 ? '' : 's'}` : '';
+      if (boardState === 'loading') { note.textContent = 'Loading today’s scores…'; continue; }
+      if (boardState === 'off') { note.textContent = 'The shared leaderboard needs you signed in to claude.ai. Your daily best still saves on this device.'; continue; }
+      const myIdx = boardRows.findIndex(r => r.id === uid);
+      const show = boardRows.slice(0, 6).map((r, i) => [r, i]);
+      if (myIdx >= 6) show.push(null, [boardRows[myIdx], myIdx]);
+      for (const item of show) {
+        const li = document.createElement('li');
+        if (!item) { li.className = 'gapRow'; li.textContent = '⋯'; ol.appendChild(li); continue; }
+        const [r, i] = item;
+        if (r.id === uid) li.className = 'me';
+        const rk = document.createElement('span'); rk.className = 'rk'; rk.textContent = '#' + (i + 1);
+        const nm = document.createElement('span'); nm.className = 'nm';
+        const nmTxt = (names[r.id] && names[r.id].name) || 'Pilot';
+        nm.textContent = r.id === uid ? `${nmTxt} (you)` : nmTxt;
+        const sc = document.createElement('span'); sc.className = 'sc'; sc.textContent = Number(r.score) || 0;
+        li.append(rk, nm, sc); ol.appendChild(li);
+      }
+      if (!boardRows.length) note.textContent = 'No scores yet today. Set the first one.';
+      else if (!canWrite) note.textContent = 'You can see the board, but your access is view-only, so your score stays on this device.';
+      else if (myIdx >= 0) note.textContent = `You're #${myIdx + 1} of ${boardRows.length} today.`;
+      else note.textContent = 'Fly a run to get on the board.';
+    }
+  }
+
+  // ---------- sharing ----------
+  function resultText() {
+    const sym = { b: '🎯', h: '🟡', k: '⏭️' };
+    const marks = hist.slice(-30).map(c => sym[c]);
+    const lines = [];
+    for (let i = 0; i < marks.length; i += 10) lines.push(marks.slice(i, i + 10).join(''));
+    const end = { burn: '🔥', drift: '🌌', rock: '🪨', hole: '🕳️', moon: '🌑' }[deathKind] || '';
+    if (lines.length) lines[lines.length - 1] += end; else lines.push(end);
+    return [
+      `☄️ Comet Hop · ${mode === 'daily' ? 'Daily ' + TODAY : 'Endless'}`,
+      `${score} pts · ${hops} hops · ${bulls} bullseyes · best chain ×${maxCombo}`,
+      ...lines,
+    ].join('\n');
+  }
+  $('copyBtn').addEventListener('click', () => {
+    const text = resultText();
+    const fallback = () => {
+      const box = $('copyBox'); box.value = text; box.hidden = false; box.focus(); box.select();
+      toast('Select the text above and copy it');
+    };
+    try {
+      navigator.clipboard.writeText(text).then(() => toast('Result copied'), fallback);
+    } catch (e) { fallback(); }
+  });
+
+  async function makeCard() {
+    try { await document.fonts.load('800 100px Unbounded'); await document.fonts.load('600 20px "IBM Plex Mono"'); } catch (e) {}
+    const c = document.createElement('canvas'); c.width = 1080; c.height = 1350;
+    const g = c.getContext('2d');
+    const bg = g.createLinearGradient(0, 0, 0, 1350);
+    bg.addColorStop(0, '#120f36'); bg.addColorStop(0.6, '#090a1c'); bg.addColorStop(1, '#1a0c2e');
+    g.fillStyle = bg; g.fillRect(0, 0, 1080, 1350);
+    const nb = g.createRadialGradient(250, 300, 0, 250, 300, 700);
+    nb.addColorStop(0, 'rgba(120, 60, 200, 0.28)'); nb.addColorStop(1, 'rgba(120, 60, 200, 0)');
+    g.fillStyle = nb; g.fillRect(0, 0, 1080, 1350);
+    for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(230,225,255,${Math.random() * 0.6})`; const s = Math.random() * 2.4; g.fillRect(Math.random() * 1080, Math.random() * 1350, s, s); }
+
+    g.fillStyle = '#8fdcff'; g.font = '600 26px "IBM Plex Mono", monospace';
+    g.fillText((mode === 'daily' ? `DAILY SKY · ${TODAY}` : 'ENDLESS RUN').split('').join(' '), 90, 120);
+    g.fillStyle = '#f2eefc'; g.font = '800 64px Unbounded, "Arial Black", sans-serif';
+    g.fillText('Comet', 90, 210); g.fillStyle = '#ffd27a'; g.fillText('Hop', 90 + g.measureText('Comet ').width, 210);
+
+    g.fillStyle = '#ffd27a'; g.font = '800 250px Unbounded, "Arial Black", sans-serif';
+    g.shadowColor = 'rgba(255,210,122,0.45)'; g.shadowBlur = 50;
+    g.fillText(String(score), 80, 480); g.shadowBlur = 0;
+    g.fillStyle = '#9a94c4'; g.font = '600 28px "IBM Plex Mono", monospace';
+    g.fillText('P O I N T S', 92, 535);
+
+    // flight path as a constellation, travelling left to right
+    const pts = path;
+    const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y));
+    const box = { x: 110, y: 610, w: 860, h: 330 };
+    const mapP = p => ({ x: box.x + (maxY === minY ? 0.5 : (maxY - p.y) / (maxY - minY)) * box.w, y: box.y + p.x * box.h });
+    g.strokeStyle = 'rgba(190,180,255,0.35)'; g.lineWidth = 2; g.setLineDash([6, 10]);
+    g.beginPath(); pts.forEach((p, i) => { const q = mapP(p); i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y); }); g.stroke(); g.setLineDash([]);
+    for (const p of pts) {
+      const q = mapP(p);
+      if (p.k === 'x') {
+        g.strokeStyle = '#ff6f91'; g.lineWidth = 5;
+        g.beginPath(); g.moveTo(q.x - 14, q.y - 14); g.lineTo(q.x + 14, q.y + 14); g.moveTo(q.x + 14, q.y - 14); g.lineTo(q.x - 14, q.y + 14); g.stroke();
+        continue;
+      }
+      const col = p.k === 'b' ? '#ffd27a' : p.k === 'k' ? '#8fdcff' : p.k === 's' ? '#aef2d4' : '#f2eefc';
+      const r = p.k === 'b' ? 9 : 6;
+      const gl = g.createRadialGradient(q.x, q.y, 0, q.x, q.y, r * 4);
+      gl.addColorStop(0, col + '88'); gl.addColorStop(1, col + '00');
+      g.fillStyle = gl; g.beginPath(); g.arc(q.x, q.y, r * 4, 0, TAU); g.fill();
+      g.fillStyle = col; g.beginPath(); g.arc(q.x, q.y, r, 0, TAU); g.fill();
+    }
+
+    const stats = [['HOPS', hops], ['BULLSEYES', bulls], ['BEST CHAIN', '×' + maxCombo]];
+    stats.forEach(([l, v], i) => {
+      const x = 90 + i * 310, y = 1020;
+      g.fillStyle = 'rgba(255,255,255,0.05)'; g.strokeStyle = 'rgba(190,180,255,0.25)'; g.lineWidth = 2;
+      g.beginPath(); g.roundRect(x, y, 280, 150, 22); g.fill(); g.stroke();
+      g.fillStyle = '#9a94c4'; g.font = '600 22px "IBM Plex Mono", monospace'; g.fillText(l, x + 26, y + 46);
+      g.fillStyle = '#f2eefc'; g.font = '800 58px Unbounded, "Arial Black", sans-serif'; g.fillText(String(v), x + 26, y + 118);
+    });
+    g.fillStyle = '#9a94c4'; g.font = '400 24px "IBM Plex Mono", monospace';
+    g.fillText(`Flown with the ${skin.name} comet · ${REASONS[deathKind] ? REASONS[deathKind][1] : ''}`, 90, 1260);
+    return new Promise(res => c.toBlob(res, 'image/png'));
+  }
+  $('cardBtn').addEventListener('click', async () => {
+    if (!downloads) return;
+    try {
+      const blob = await makeCard();
+      await downloads.save({ filename: `comet-hop-${mode === 'daily' ? TODAY + '-' : ''}${score}.png`, data: blob });
+      toast('Card saved');
+    } catch (e) {
+      if (e && e.code === 'declined') return;
+      if (e && e.code === 'rate_limited') { toast('A save is already waiting for you'); return; }
+      toast('Saving images is not available here');
+      $('cardBtn').hidden = true;
+    }
+  });
+
+  // ---------- input ----------
+  function act() {
+    ensureAudio();
+    if (state === 'ready') { start(); return; }
+    if (state === 'over') { if (performance.now() - overAt > 900) { reset(); start(); } return; }
+    launch();
+  }
+  function start() {
+    state = 'play';
+    $('menu').hidden = true; $('over').hidden = true;
+    tone(523, 0.12, 'triangle', 0.1); tone(784, 0.2, 'triangle', 0.1, 1, 0.08);
+  }
+  function toMenu() {
+    state = 'ready'; reset();
+    $('over').hidden = true; $('menu').hidden = false;
+    renderSkins(); renderMode(); renderBoards();
+  }
+  window.addEventListener('pointerdown', e => {
+    const tg = e.target;
+    if (tg.closest && (tg.closest('button') || tg.closest('.panel') || tg.closest('summary'))) return;
+    if (state === 'ready' && !$('menu').hidden) return; // menu needs the Launch button
+    e.preventDefault(); act();
+  }, { passive: false });
+  $('startBtn').addEventListener('click', e => { e.stopPropagation(); act(); });
+  $('againBtn').addEventListener('click', e => { e.stopPropagation(); if (state === 'over') { reset(); ensureAudio(); start(); } });
+  $('menuBtn').addEventListener('click', e => { e.stopPropagation(); toMenu(); });
+  window.addEventListener('keydown', e => {
+    if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SUMMARY')) return;
+    if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowUp') { e.preventDefault(); act(); }
+  });
+
+  // ---------- update ----------
+  const POWER = {
+    shield: { name: 'Shield', color: '#8fdcff' },
+    slow: { name: 'Slow-mo', color: '#c9a8ff' },
+    magnet: { name: 'Magnet', color: '#ff6f91' },
+  };
+  const capMul = () => (powers.magnet > 0 ? 1.22 : 1);
+
+  function grab(k) {
+    k.got = true;
+    if (k.kind === 'shield') powers.shield = true;
+    if (k.kind === 'slow') powers.slow = 6;
+    if (k.kind === 'magnet') powers.magnet = 10;
+    popText(k.x, k.y - 22, POWER[k.kind].name, POWER[k.kind].color, 1);
+    burst(k.x, k.y, 18, POWER[k.kind].color, 160, 0.6);
+    if (k.kind === 'slow') tone(660, 0.5, 'sine', 0.1, 0.5);
+    else { tone(660, 0.12, 'square', 0.05); tone(990, 0.2, 'triangle', 0.08, 1, 0.06); }
+    buzz(12);
+  }
+
+  function useShield(kind) {
+    const c = comet;
+    powers.shield = false; invuln = 1.6;
+    popText(c.x, c.y - 30, 'Shield saved you', '#8fdcff', 1.2);
+    burst(c.x, c.y, 34, '#8fdcff', 260, 0.8);
+    tone(520, 0.3, 'triangle', 0.12, 1.6); tone(1040, 0.4, 'sine', 0.08, 1, 0.08);
+    buzz(25);
+    if (kind === 'burn') {
+      c.orbitR = c.planet.r + 42;
+    } else if (kind === 'drift') {
+      // warp to the next planet up
+      const target = planets.find(p => p.idx === c.from.idx + 1) || c.from;
+      c.mode = 'orbit'; c.planet = target; c.ang = Math.PI / 2; c.dir = 1;
+      c.dist = target.cap; c.orbitR = target.r + 42;
+      c.x = target.x; c.y = target.y + target.cap;
+      trail = [];
+      burst(c.x, c.y, 20, '#8fdcff', 160, 0.6);
+    }
+  }
+
+  function update(dt, realDt) {
+    t += realDt;
+    if (state === 'play') {
+      rt += dt;
+      powers.slow = Math.max(0, powers.slow - realDt);
+      powers.magnet = Math.max(0, powers.magnet - realDt);
+      invuln = Math.max(0, invuln - realDt);
+    }
+    for (const p of planets) {
+      if (p.amp) p.x = p.bx + Math.sin(rt * p.sp + p.ph) * p.amp;
+      p.flash = Math.max(0, p.flash - realDt * 2.2);
+      for (const m of p.moons) {
+        const a = m.a + m.sp * rt;
+        m.x = p.x + Math.cos(a) * m.rr; m.y = p.y + Math.sin(a) * m.rr;
+      }
+    }
+    for (const s of stars) if (!s.pulled) s.x = 24 + s.fx * (FW - 48);
+    for (const k of pickups) k.x = 30 + k.fx * (FW - 60);
+    for (const h of hazards) {
+      if (h.kind === 'rock') { h.x = FW / 2 + Math.sin(rt * h.sp + h.ph) * (FW / 2 - 16) * h.ampF; h.rot += dt * (h.sp + 0.4); }
+      else { h.x = 30 + h.fx * (FW - 60); h.spin += dt * 2.2; }
+    }
+    const c = comet;
+
+    if (c.mode === 'orbit') {
+      const p = c.planet;
+      c.ang += c.dir * orbitW() * dt;
+      if (state === 'play') c.orbitR -= decayRate() * dt;
+      c.dist += (c.orbitR - c.dist) * Math.min(1, dt * 4);
+      c.x = p.x + Math.cos(c.ang) * c.dist;
+      c.y = p.y + Math.sin(c.ang) * c.dist;
+      if (state === 'play' && c.dist < p.r + 4) die('burn');
+    } else if (c.mode === 'fly') {
+      c.flyT += dt;
+      for (const p of planets) {
+        if (p === c.from) continue; // the planet you just left never pulls you back
+        const dx = p.x - c.x, dy = p.y - c.y, d2 = dx * dx + dy * dy;
+        if (d2 < 240 * 240) {
+          const d = Math.sqrt(d2), a = 9e5 / Math.max(d2, 900);
+          c.vx += (dx / d) * a * dt; c.vy += (dy / d) * a * dt;
+        }
+      }
+      if (invuln <= 0) {
+        for (const h of hazards) {
+          if (h.kind !== 'hole') continue;
+          const dx = h.x - c.x, dy = h.y - c.y, d2 = dx * dx + dy * dy;
+          if (d2 < 320 * 320) {
+            const d = Math.sqrt(d2), a = 3.2e6 / Math.max(d2, 400);
+            c.vx += (dx / d) * a * dt; c.vy += (dy / d) * a * dt;
+          }
+        }
+      }
+      const sp = Math.hypot(c.vx, c.vy) || 1;
+      c.vx *= c.speed / sp; c.vy *= c.speed / sp;
+      c.x += c.vx * dt; c.y += c.vy * dt;
+      if (skin.sparks && Math.random() < 0.7) parts.push({ x: c.x, y: c.y, vx: rand(-40, 40), vy: rand(-40, 40), life: 0.5, max: 0.5, color: Math.random() < 0.5 ? '#fff1b8' : '#ff9a3c', size: rand(1, 2.4) });
+
+      if (invuln <= 0) {
+        for (const h of hazards) {
+          const d = Math.hypot(c.x - h.x, c.y - h.y);
+          if (h.kind === 'rock' && d < h.r + 4) { die('rock'); break; }
+          if (h.kind === 'hole' && d < h.r + 3) { die('hole'); break; }
+        }
+      }
+      if (c.mode === 'fly' && invuln <= 0) {
+        outer: for (const p of planets) for (const m of p.moons) {
+          if (Math.hypot(c.x - m.x, c.y - m.y) < m.r + 4) { die('moon'); break outer; }
+        }
+      }
+      if (c.mode === 'fly') {
+        const cm = capMul();
+        for (const p of planets) {
+          if (p === c.from) continue;
+          if (Math.hypot(c.x - p.x, c.y - p.y) < p.cap * cm) { capture(p); break; }
+        }
+      }
+      if (c.mode === 'fly' && (c.x < -12 || c.x > FW + 12 || c.y - camY > H + 30 || c.y - camY < -H * 0.6 || c.flyT > 3)) die('drift');
+    }
+
+    if (state === 'play' && c.mode !== 'dead') {
+      for (const s of stars) {
+        if (s.got) continue;
+        const d = Math.hypot(c.x - s.x, c.y - s.y);
+        if (powers.magnet > 0 && d < 170 && d > 1) {
+          s.pulled = true;
+          const step = Math.min(d, 520 * dt);
+          s.x += (c.x - s.x) / d * step; s.y += (c.y - s.y) / d * step;
+        }
+        if (Math.hypot(c.x - s.x, c.y - s.y) < 22) {
+          s.got = true; score += 1; updateHud();
+          popText(s.x, s.y - 16, '+1 stardust', '#8fdcff', 0.8);
+          burst(s.x, s.y, 12, '#8fdcff', 120, 0.5);
+          tone(1568, 0.12, 'triangle', 0.07); tone(2093, 0.18, 'sine', 0.05, 1, 0.05);
+        }
+      }
+      for (const k of pickups) if (!k.got && Math.hypot(c.x - k.x, c.y - k.y) < 26) grab(k);
+      if (mode === 'daily') while (rec.length <= rt * 15) rec.push([Math.round(c.x / FW * 1000), Math.round(c.y), score]);
+    }
+
+    if (c.mode !== 'dead') {
+      trail.push({ x: c.x, y: c.y });
+      if (trail.length > 26) trail.shift();
+    } else if (trail.length) trail.shift();
+
+    const focus = c.mode === 'orbit' ? c.planet.y : c.y;
+    const target = focus - H * 0.62;
+    camY += (target - camY) * Math.min(1, realDt * (c.mode === 'fly' ? 2.4 : 3));
+
+    while (planets[planets.length - 1].y > camY - H) spawnPlanet();
+    planets = planets.filter(p => p.y - camY < H + 260 || p === c.planet || p === c.from);
+    stars = stars.filter(s => s.y - camY < H + 100);
+    pickups = pickups.filter(k => k.y - camY < H + 100);
+    hazards = hazards.filter(h => h.y - camY < H + 200);
+
+    for (const q of parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.96; q.vy *= 0.96; q.life -= dt; }
+    parts = parts.filter(q => q.life > 0);
+    for (const q of pops) { q.y -= 34 * realDt; q.life -= realDt; }
+    pops = pops.filter(q => q.life > 0);
+    shake = Math.max(0, shake - realDt * 30);
+  }
+
+  // ---------- draw ----------
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0d0b2a'); g.addColorStop(0.55, '#090a1c'); g.addColorStop(1, '#120a26');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const ny = ((-camY * 0.04) % (H * 2) + H * 2) % (H * 2) - H * 0.5;
+    const neb = ctx.createRadialGradient(W * 0.25, ny, 0, W * 0.25, ny, Math.max(W, H) * 0.6);
+    neb.addColorStop(0, 'rgba(120, 60, 200, 0.16)'); neb.addColorStop(1, 'rgba(120, 60, 200, 0)');
+    ctx.fillStyle = neb; ctx.fillRect(0, 0, W, H);
+    const ny2 = ((-camY * 0.07 + H) % (H * 2) + H * 2) % (H * 2) - H * 0.5;
+    const neb2 = ctx.createRadialGradient(W * 0.8, ny2, 0, W * 0.8, ny2, Math.max(W, H) * 0.5);
+    neb2.addColorStop(0, 'rgba(255, 90, 140, 0.09)'); neb2.addColorStop(1, 'rgba(255, 90, 140, 0)');
+    ctx.fillStyle = neb2; ctx.fillRect(0, 0, W, H);
+    for (const s of sky) {
+      const y = ((s.y - camY * s.d) % H + H) % H;
+      const a = 0.35 + 0.35 * Math.sin(t * 1.5 + s.tw);
+      ctx.fillStyle = `rgba(230, 225, 255, ${a})`;
+      ctx.fillRect(s.x, y, s.s, s.s);
+    }
+    if (FX > 1) {
+      ctx.strokeStyle = 'rgba(190, 180, 255, 0.10)'; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 10]); ctx.lineDashOffset = camY * 0.5;
+      ctx.beginPath(); ctx.moveTo(FX, 0); ctx.lineTo(FX, H); ctx.moveTo(FX + FW, 0); ctx.lineTo(FX + FW, H); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  function drawPlanet(p) {
+    const x = p.x + FX, y = p.y - camY;
+    const reach = p.boss ? p.moons[0].rr + 30 : p.cap;
+    if (y < -reach - 40 || y > H + reach + 40) return;
+    const isHome = comet.planet === p;
+    const cm = capMul();
+    ctx.save();
+    ctx.setLineDash([3, 7]); ctx.lineDashOffset = -t * 12;
+    ctx.strokeStyle = powers.magnet > 0 && !isHome ? `rgba(255, 111, 145, ${0.4 + p.flash * 0.4})`
+      : p.boss ? `rgba(255, 210, 122, ${isHome ? 0.15 : 0.45 + p.flash * 0.4})`
+      : `rgba(200, 190, 255, ${isHome ? 0.1 : 0.26 + p.flash * 0.5})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x, y, p.cap * cm, 0, TAU); ctx.stroke();
+    ctx.restore();
+    const gl = ctx.createRadialGradient(x, y, p.r * 0.6, x, y, p.r * 2.6);
+    gl.addColorStop(0, hexA(p.pal[0], 0.28 + p.flash * 0.3)); gl.addColorStop(1, hexA(p.pal[0], 0));
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(x, y, p.r * 2.6, 0, TAU); ctx.fill();
+    if (p.ring) drawRing(p, x, y, true);
+    const b = ctx.createRadialGradient(x - p.r * 0.4, y - p.r * 0.45, p.r * 0.1, x, y, p.r * 1.05);
+    b.addColorStop(0, p.pal[0]); b.addColorStop(1, p.pal[1]);
+    ctx.fillStyle = b; ctx.beginPath(); ctx.arc(x, y, p.r, 0, TAU); ctx.fill();
+    if (p.bands || p.boss) {
+      ctx.save(); ctx.beginPath(); ctx.arc(x, y, p.r, 0, TAU); ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = p.r * 0.16;
+      for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.ellipse(x, y + i * p.r * 0.45, p.r * 1.2, p.r * 0.12, 0, 0, TAU); ctx.stroke(); }
+      ctx.restore();
+    }
+    const sh = ctx.createRadialGradient(x - p.r * 0.5, y - p.r * 0.5, p.r * 0.6, x - p.r * 0.2, y - p.r * 0.2, p.r * 1.6);
+    sh.addColorStop(0, 'rgba(9,10,28,0)'); sh.addColorStop(1, 'rgba(9,10,28,0.55)');
+    ctx.fillStyle = sh; ctx.beginPath(); ctx.arc(x, y, p.r, 0, TAU); ctx.fill();
+    if (p.ring) drawRing(p, x, y, false);
+    if (p.boss) {
+      ctx.save();
+      ctx.setLineDash([2, 10]); ctx.strokeStyle = 'rgba(255, 111, 145, 0.22)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, p.moons[0].rr, 0, TAU); ctx.stroke();
+      ctx.restore();
+      for (const m of p.moons) {
+        const mx = m.x + FX, my = m.y - camY;
+        const mg = ctx.createRadialGradient(mx - 3, my - 3, 1, mx, my, m.r * 1.1);
+        mg.addColorStop(0, '#e6e0f2'); mg.addColorStop(1, '#5a5070');
+        ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, m.r, 0, TAU); ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 111, 145, 0.5)'; ctx.lineWidth = 1.2; ctx.stroke();
+      }
+    }
+  }
+
+  function drawRing(p, x, y, back) {
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(p.tilt);
+    ctx.strokeStyle = hexA(p.pal[0], 0.6); ctx.lineWidth = 3;
+    ctx.beginPath();
+    if (back) ctx.ellipse(0, 0, p.r * 1.75, p.r * 0.45, 0, Math.PI, TAU);
+    else ctx.ellipse(0, 0, p.r * 1.75, p.r * 0.45, 0, 0, Math.PI);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHazards() {
+    for (const h of hazards) {
+      const x = h.x + FX, y = h.y - camY;
+      if (y < -120 || y > H + 120) continue;
+      if (h.kind === 'rock') {
+        ctx.save(); ctx.translate(x, y); ctx.rotate(h.rot);
+        const g = ctx.createRadialGradient(-h.r * 0.3, -h.r * 0.3, 1, 0, 0, h.r * 1.2);
+        g.addColorStop(0, '#b9a99a'); g.addColorStop(1, '#4a3d40');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        for (let i = 0; i < 9; i++) {
+          const a = i / 9 * TAU, rr = h.r * (0.78 + 0.22 * Math.sin(i * 2.7 + h.seed * 10));
+          i ? ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+        }
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 111, 145, 0.35)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.restore();
+      } else {
+        // accretion disc + lensing halo
+        const halo = ctx.createRadialGradient(x, y, h.r, x, y, h.r * 7);
+        halo.addColorStop(0, 'rgba(150, 90, 255, 0.35)'); halo.addColorStop(0.4, 'rgba(255, 120, 80, 0.12)'); halo.addColorStop(1, 'rgba(150, 90, 255, 0)');
+        ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(x, y, h.r * 7, 0, TAU); ctx.fill();
+        ctx.save(); ctx.translate(x, y); ctx.rotate(h.spin);
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 3; i++) {
+          ctx.strokeStyle = ['rgba(255, 170, 90, 0.8)', 'rgba(255, 111, 145, 0.6)', 'rgba(201, 168, 255, 0.5)'][i];
+          ctx.lineWidth = 3 - i * 0.6;
+          ctx.beginPath(); ctx.arc(0, 0, h.r * (1.6 + i * 0.55), i * 2.1, i * 2.1 + 4.2); ctx.stroke();
+        }
+        ctx.restore();
+        ctx.fillStyle = '#000000'; ctx.beginPath(); ctx.arc(x, y, h.r, 0, TAU); ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 220, 180, 0.9)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(x, y, h.r + 1, 0, TAU); ctx.stroke();
+      }
+    }
+  }
+
+  function drawComet() {
+    const c = comet;
+    if (c.mode === 'orbit') {
+      const p = c.planet, x = p.x + FX, y = p.y - camY;
+      const margin = c.dist - p.r;
+      const danger = state === 'play' && margin < 16;
+      const pulse = danger ? 0.5 + 0.5 * Math.sin(t * 18) : 0;
+      ctx.strokeStyle = danger ? `rgba(255, 111, 145, ${0.35 + pulse * 0.4})` : hexA(skin.head, 0.16);
+      ctx.lineWidth = danger ? 2 : 1;
+      ctx.beginPath(); ctx.arc(x, y, c.dist, 0, TAU); ctx.stroke();
+      if (danger) {
+        const halo = ctx.createRadialGradient(x, y, p.r, x, y, p.r + 14);
+        halo.addColorStop(0, `rgba(255, 111, 145, ${0.35 + pulse * 0.25})`); halo.addColorStop(1, 'rgba(255,111,145,0)');
+        ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(x, y, p.r + 14, 0, TAU); ctx.fill();
+      }
+      if (state !== 'over') {
+        const tx = -Math.sin(c.ang) * c.dir, ty = Math.cos(c.ang) * c.dir;
+        ctx.save();
+        ctx.setLineDash([2, 8]); ctx.lineCap = 'round';
+        const L = 90;
+        const lg = ctx.createLinearGradient(c.x + FX, c.y - camY, c.x + FX + tx * L, c.y - camY + ty * L);
+        lg.addColorStop(0, hexA(skin.head, 0.7)); lg.addColorStop(1, hexA(skin.head, 0));
+        ctx.strokeStyle = lg; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(c.x + FX, c.y - camY); ctx.lineTo(c.x + FX + tx * L, c.y - camY + ty * L); ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (let i = 1; i < trail.length; i++) {
+      const a = trail[i - 1], b = trail[i], k = i / trail.length;
+      ctx.strokeStyle = skin.trail(k, i);
+      ctx.lineWidth = 1 + k * 7;
+      ctx.beginPath(); ctx.moveTo(a.x + FX, a.y - camY); ctx.lineTo(b.x + FX, b.y - camY); ctx.stroke();
+    }
+    if (c.mode !== 'dead') {
+      const x = c.x + FX, y = c.y - camY;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 22);
+      g.addColorStop(0, hexA(skin.core, 1)); g.addColorStop(0.25, hexA(skin.head, 0.8)); g.addColorStop(1, hexA(skin.head, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 22, 0, TAU); ctx.fill();
+      ctx.fillStyle = skin.core; ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+      if (powers.shield || (invuln > 0 && Math.sin(t * 30) > 0)) {
+        ctx.strokeStyle = 'rgba(143, 220, 255, 0.75)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y, 12 + Math.sin(t * 6) * 1.5, 0, TAU); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawStars() {
+    for (const s of stars) {
+      if (s.got) continue;
+      const x = s.x + FX, y = s.y - camY;
+      if (y < -20 || y > H + 20) continue;
+      const k = 7 + Math.sin(t * 4 + s.ph) * 1.5;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(t * 1.2 + s.ph);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 16);
+      g.addColorStop(0, 'rgba(143, 220, 255, 0.5)'); g.addColorStop(1, 'rgba(143, 220, 255, 0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 16, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#dff6ff';
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const rr = i % 2 === 0 ? k : k * 0.3, a = i * Math.PI / 4;
+        ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawFx() {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (const q of parts) {
+      ctx.globalAlpha = Math.max(0, q.life / q.max);
+      ctx.fillStyle = q.color;
+      ctx.beginPath(); ctx.arc(q.x + FX, q.y - camY, q.size, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const q of pops) {
+      ctx.globalAlpha = Math.min(1, q.life / q.max * 1.6);
+      ctx.fillStyle = q.color;
+      ctx.font = /^\+\d+$/.test(q.text) ? '800 22px Unbounded, Arial Black, sans-serif' : '600 12px "IBM Plex Mono", monospace';
+      ctx.fillText(q.text.toUpperCase(), q.x + FX, q.y - camY);
+    }
+    ctx.restore();
+  }
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${n >> 16 & 255}, ${n >> 8 & 255}, ${n & 255}, ${a})`;
+  }
+
+  function drawPickups() {
+    for (const k of pickups) {
+      if (k.got) continue;
+      const x = k.x + FX, y = k.y - camY + Math.sin(t * 2.5 + k.ph) * 3;
+      if (y < -30 || y > H + 30) continue;
+      const col = POWER[k.kind].color;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 28);
+      g.addColorStop(0, hexA(col, 0.35)); g.addColorStop(1, hexA(col, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 28, 0, TAU); ctx.fill();
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.sin(t + k.ph) * 0.2);
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(9, 10, 28, 0.8)';
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) { const a = i / 6 * TAU + Math.PI / 6; ctx.lineTo(Math.cos(a) * 13, Math.sin(a) * 13); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 1.8; ctx.lineCap = 'round'; ctx.beginPath();
+      if (k.kind === 'shield') { ctx.moveTo(0, -6); ctx.lineTo(5, -4); ctx.lineTo(4, 2); ctx.lineTo(0, 6); ctx.lineTo(-4, 2); ctx.lineTo(-5, -4); ctx.closePath(); }
+      else if (k.kind === 'slow') { ctx.arc(0, 0, 6, 0, TAU); ctx.moveTo(0, 0); ctx.lineTo(0, -4); ctx.moveTo(0, 0); ctx.lineTo(3, 1); }
+      else { ctx.arc(0, -1, 5, Math.PI, 0); ctx.moveTo(-5, -1); ctx.lineTo(-5, 5); ctx.moveTo(5, -1); ctx.lineTo(5, 5); }
+      ctx.stroke(); ctx.restore();
+    }
+  }
+
+  function drawGhost() {
+    if (mode !== 'daily' || !ghost || state === 'ready') return;
+    const pts = ghost.pts, f = rt * 15, i = Math.floor(f);
+    const P = j => { const q = pts[clamp(j, 0, pts.length - 1)]; return [q[0] / 1000 * FW + FX, q[1] - camY]; };
+    ctx.save();
+    ctx.fillStyle = 'rgba(220, 230, 255, 0.6)'; ctx.font = '600 9px "IBM Plex Mono", monospace'; ctx.textAlign = 'center';
+    if (i >= pts.length - 1) {
+      const [x, y] = P(pts.length - 1);
+      ctx.strokeStyle = 'rgba(200, 210, 255, 0.4)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7); ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7); ctx.stroke();
+      ctx.fillText('BEST ENDED', x, y - 14);
+      ctx.restore(); return;
+    }
+    const k = f - i, a = P(i), b = P(i + 1);
+    const x = a[0] + (b[0] - a[0]) * k, y = a[1] + (b[1] - a[1]) * k;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(200, 210, 255, 0.2)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x, y);
+    for (let j = i; j >= Math.max(0, i - 8); j--) { const q = P(j); ctx.lineTo(q[0], q[1]); }
+    ctx.stroke();
+    const g = ctx.createRadialGradient(x, y, 0, x, y, 14);
+    g.addColorStop(0, 'rgba(220, 230, 255, 0.55)'); g.addColorStop(1, 'rgba(220, 230, 255, 0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 14, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(220, 230, 255, 0.6)';
+    ctx.fillText('BEST', x, y - 16);
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawSky();
+    if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
+    drawHazards();
+    for (const p of planets) drawPlanet(p);
+    drawStars();
+    drawPickups();
+    drawGhost();
+    drawComet();
+    drawFx();
+    if (powers.slow > 0) {
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const a = Math.min(1, powers.slow) * 0.28;
+      const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+      v.addColorStop(0, 'rgba(150, 100, 255, 0)'); v.addColorStop(1, `rgba(150, 100, 255, ${a})`);
+      ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  let powersKey = '';
+  function renderPowers() {
+    const items = [];
+    if (powers.shield) items.push(['shield', 'Shield']);
+    if (powers.slow > 0) items.push(['slow', `Slow-mo ${Math.ceil(powers.slow)}s`]);
+    if (powers.magnet > 0) items.push(['magnet', `Magnet ${Math.ceil(powers.magnet)}s`]);
+    let gtxt = '';
+    if (mode === 'daily' && ghost && state !== 'ready') {
+      const gi = Math.min(ghost.pts.length - 1, Math.floor(rt * 15));
+      const diff = score - ghost.pts[gi][2];
+      gtxt = diff >= 0 ? `vs ghost +${diff}` : `vs ghost −${-diff}`;
+    }
+    const key = items.map(i => i[1]).join('|') + '#' + gtxt;
+    if (key === powersKey) return;
+    powersKey = key;
+    const box = $('powers'); box.textContent = '';
+    for (const [k, txt] of items) { const s = document.createElement('span'); s.className = 'pw ' + k; s.textContent = txt; box.appendChild(s); }
+    const gh = $('ghostHud'); gh.textContent = gtxt; gh.className = gtxt.includes('−') ? 'behind' : '';
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const real = Math.min(1 / 30, (now - last) / 1000);
+    last = now;
+    update(real * (powers.slow > 0 ? 0.5 : 1), real);
+    render();
+    renderPowers();
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  reset();
+  renderMode();
+  renderSkins();
+  renderBoards();
+  initCaps();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
