@@ -230,7 +230,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     <button class="go" id="startBtn" type="button">Launch</button>
 
     <section class="board" id="boardMenuWrap" hidden>
-      <div class="label">Today's Daily leaderboard <span id="boardCountMenu"></span></div>
+      <div class="label" id="boardLabelMenu">Today's Daily leaderboard <span id="boardCountMenu"></span></div>
       <ol id="boardMenu"></ol>
       <p class="boardNote" id="boardNoteMenu"></p>
       <form class="nick" id="nickFormMenu" hidden>
@@ -275,7 +275,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     <textarea id="copyBox" readonly hidden aria-label="Result text to copy"></textarea>
 
     <section class="board" id="boardOverWrap" hidden>
-      <div class="label">Today's leaderboard <span id="boardCountOver"></span></div>
+      <div class="label" id="boardLabelOver">Today's Daily leaderboard <span id="boardCountOver"></span></div>
       <ol id="boardOver"></ol>
       <p class="boardNote" id="boardNoteOver"></p>
       <form class="nick" id="nickFormOver" hidden>
@@ -341,6 +341,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
   };
   let bestEndless = 0;
+  let endlessRun = store.get('comethop-endless-run', null); // stats of the best Endless run, for posting
   try { bestEndless = parseInt(localStorage.getItem('comethop-best') || '0', 10) || 0; } catch (e) {}
   let dailyLocal = store.get('comethop-daily', null);
   if (!dailyLocal || dailyLocal.day !== TODAY) dailyLocal = { day: TODAY, best: 0 };
@@ -618,12 +619,15 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       if (score >= dailyLocal.best) dailyLocal.run = { score, hops, bulls, chain: maxCombo };
       dailyLocal.best = Math.max(dailyLocal.best, score);
     }
-    else bestEndless = Math.max(bestEndless, score);
+    else {
+      if (score >= bestEndless) { endlessRun = { score, hops, bulls, chain: maxCombo }; store.set('comethop-endless-run', endlessRun); }
+      bestEndless = Math.max(bestEndless, score);
+    }
     const prevTop = topScore;
     topScore = Math.max(topScore, score);
     for (const s of SKINS) if (s.need > prevTop && s.need <= topScore) chips.push([`Unlocked ${s.name}`, 'alt']);
     saveBests();
-    if (mode === 'daily') submitDaily();
+    submitRun();
     if (mode === 'daily' && rec.length > 5 && (!ghost || score > ghost.score)) {
       rec.push([Math.round(comet.x / FW * 1000), Math.round(comet.y), score]);
       ghost = { day: TODAY, score, pts: rec };
@@ -642,7 +646,7 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       for (const [txt, cls] of chips) { const s = document.createElement('span'); s.className = 'chip' + (cls ? ' ' + cls : ''); s.textContent = txt; ch.appendChild(s); }
       ch.hidden = !chips.length;
       $('copyBox').hidden = true;
-      $('boardOverWrap').hidden = mode !== 'daily';
+      $('boardOverWrap').hidden = !web && mode !== 'daily';
       updateHud(); renderSkins(); renderBoards();
       $('over').hidden = false;
     }, 650);
@@ -672,12 +676,13 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     $('modeNote').textContent = mode === 'daily'
       ? `Everyone gets the same planets today (UTC). Your best run counts, and a ghost of it flies with you next time. A new sky arrives at midnight UTC.`
       : 'A fresh random sky every run. Your best score unlocks new comets.';
-    $('boardMenuWrap').hidden = false; // the daily board shows on both tabs
+    $('boardMenuWrap').hidden = false; // on claude.ai both tabs show the daily board
     updateHud();
   }
   function setMode(m) {
     if (m === mode) return;
     mode = m; store.set('comethop-mode', mode);
+    if (web) { boardRows = []; boardTotal = 0; boardState = 'loading'; }
     renderMode(); reset(); renderBoards(); fetchBoard();
   }
   $('modeEndless').addEventListener('click', () => setMode('endless'));
@@ -768,34 +773,43 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
     setInterval(() => { if (!document.hidden && state !== 'play') fetchBoard(); }, 30000);
   }
 
+  // Which board is on screen: on the web each tab has its own; on claude.ai only Daily exists.
+  const boardKind = () => (web ? mode : 'daily');
+
   async function fetchBoard() {
     if (!web) return;
+    const kind = boardKind();
+    let rows = [], total = 0, st = 'ok';
     try {
-      const r = await fetch(`${LEADERBOARD_API}/scores?day=${TODAY}`);
+      const r = await fetch(kind === 'daily' ? `${LEADERBOARD_API}/scores?day=${TODAY}` : `${LEADERBOARD_API}/scores?board=endless`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
-      boardRows = d.scores.map(x => ({ id: x.pid, nickname: x.nickname, score: x.score }));
-      boardTotal = d.total; boardState = 'ok';
-    } catch (e) { boardState = 'off'; }
+      rows = d.scores.map(x => ({ id: x.pid, nickname: x.nickname, score: x.score }));
+      total = d.total;
+    } catch (e) { st = 'off'; }
+    if (kind !== boardKind()) return; // the tab changed while this was loading
+    boardRows = rows; boardTotal = total; boardState = st;
     renderBoards();
   }
 
-  // Posts today's best run; the server keeps the higher score and the latest nickname.
-  async function postBest(retried) {
-    const run = dailyLocal.run;
+  // Posts the best run for a board; the server keeps the higher score and the latest nickname.
+  async function postBest(kind, retried) {
+    const run = kind === 'daily' ? dailyLocal.run : endlessRun;
     if (!web || !nick || !run || !run.score) return;
     try {
       const r = await fetch(`${LEADERBOARD_API}/scores`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ day: TODAY, key: webKey, nickname: nick, ...run }),
+        body: JSON.stringify(kind === 'daily'
+          ? { board: 'daily', day: TODAY, key: webKey, nickname: nick, ...run }
+          : { board: 'endless', key: webKey, nickname: nick, ...run }),
       });
-      if (r.status === 429 && !retried) { setTimeout(() => postBest(true), 2500); return; }
+      if (r.status === 429 && !retried) { setTimeout(() => postBest(kind, true), 2500); return; }
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
         toast(e.error === 'bad_nickname' ? 'The leaderboard does not accept that nickname. Try another.' : 'Your score could not be posted. It is still saved on this device.');
         return;
       }
-      await fetchBoard();
+      if (kind === boardKind()) await fetchBoard();
     } catch (e) { toast('The leaderboard cannot be reached. Your score is still saved on this device.'); }
   }
 
@@ -807,13 +821,20 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       nick = v; store.set('comethop-nick', nick);
       for (const id of ['nickMenu', 'nickOver']) $(id).value = nick;
       $(inputId).blur();
-      toast(dailyLocal.run && dailyLocal.run.score ? `Posting your best as ${nick}` : `Saved. Your daily best will post as ${nick}`);
-      renderBoards(); postBest();
+      const hasRun = (dailyLocal.run && dailyLocal.run.score) || (endlessRun && endlessRun.score);
+      toast(hasRun ? `Posting your best as ${nick}` : `Saved. Your best runs will post as ${nick}`);
+      renderBoards(); postBest('daily'); postBest('endless');
     });
   }
 
+  function submitRun() {
+    if (web) {
+      const best = mode === 'daily' ? dailyLocal.best : bestEndless;
+      if (score > 0 && score >= best) postBest(mode); else fetchBoard();
+    } else if (mode === 'daily') submitDaily();
+  }
+
   function submitDaily() {
-    if (web) { if (score > 0 && score >= dailyLocal.best) postBest(); else fetchBoard(); return; }
     if (!db || !uid || !canWrite) return;
     if (myDaily && myDaily.day === TODAY && myDaily.score >= score) return;
     const body = { day: TODAY, score, hops, bulls, chain: maxCombo, skin: skinId, at: new Date().toISOString() };
@@ -832,14 +853,17 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
       try { names = await userApi.profiles(boardRows.map(r => r.id)); } catch (e) { names = {}; }
     }
     if (seq !== renderSeq) return;
-    for (const [listId, noteId, countId] of [['boardMenu', 'boardNoteMenu', 'boardCountMenu'], ['boardOver', 'boardNoteOver', 'boardCountOver']]) {
+    const daily = boardKind() === 'daily';
+    const when = daily ? 'today' : 'all time';
+    for (const [listId, noteId, countId, labelId] of [['boardMenu', 'boardNoteMenu', 'boardCountMenu', 'boardLabelMenu'], ['boardOver', 'boardNoteOver', 'boardCountOver', 'boardLabelOver']]) {
+      $(labelId).firstChild.nodeValue = daily ? "Today's Daily leaderboard " : 'All-time Endless leaderboard ';
       const ol = $(listId); ol.textContent = '';
       const note = $(noteId);
       const total = web ? boardTotal : boardRows.length;
       $(countId).textContent = total ? `${total} pilot${total === 1 ? '' : 's'}` : '';
-      if (boardState === 'loading') { note.textContent = 'Loading today’s scores…'; continue; }
+      if (boardState === 'loading') { note.textContent = 'Loading scores…'; continue; }
       if (boardState === 'off') {
-        note.textContent = web ? 'The leaderboard cannot be reached right now. Your daily best still saves on this device.'
+        note.textContent = web ? 'The leaderboard cannot be reached right now. Your best still saves on this device.'
           : 'The shared leaderboard needs you signed in to claude.ai. Your daily best still saves on this device.';
         continue;
       }
@@ -858,10 +882,11 @@ summary { cursor: pointer; font-size: 11px; letter-spacing: .14em; text-transfor
         const sc = document.createElement('span'); sc.className = 'sc'; sc.textContent = Number(r.score) || 0;
         li.append(rk, nm, sc); ol.appendChild(li);
       }
-      if (!boardRows.length) note.textContent = web && !nick ? 'No scores yet today. Add a nickname and set the first one.' : 'No scores yet today. Set the first one.';
-      else if (web && !nick) note.textContent = 'Add a nickname to post your daily best.';
+      const none = daily ? 'No scores yet today.' : 'No Endless scores yet.';
+      if (!boardRows.length) note.textContent = web && !nick ? `${none} Add a nickname and set the first one.` : `${none} Set the first one.`;
+      else if (web && !nick) note.textContent = `Add a nickname to post your ${daily ? 'daily' : 'Endless'} best.`;
       else if (!canWrite) note.textContent = 'You can see the board, but your access is view-only, so your score stays on this device.';
-      else if (myIdx >= 0) note.textContent = `You're #${myIdx + 1} of ${total} today.`;
+      else if (myIdx >= 0) note.textContent = `You're #${myIdx + 1} of ${total} ${when}.`;
       else note.textContent = 'Fly a run to get on the board.';
     }
   }

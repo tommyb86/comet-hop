@@ -1,7 +1,8 @@
-// Comet Hop daily leaderboard.
+// Comet Hop leaderboards.
 //
-// GET  /scores?day=YYYY-MM-DD  -> today's top 50 (public player ids, never keys)
-// POST /scores                 -> submit a run; keeps each player's best per day
+// GET  /scores?day=YYYY-MM-DD  -> that day's Daily top 50 (defaults to today, UTC)
+// GET  /scores?board=endless   -> the all-time Endless top 50
+// POST /scores                 -> submit a run; keeps each player's best per board
 //
 // Players have no accounts. The game makes a random private key on each device
 // and sends it with every score; we store only its SHA-256, so nobody can post
@@ -12,7 +13,13 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KEY_RE = /^[0-9a-f]{32,64}$/;
 const NICK_RE = /^[\p{L}\p{N} _.'-]{1,20}$/u;
 const MAX_BODY = 1024;
-const MIN_GAP_MS = 2000; // per player, between submissions
+const MIN_GAP_MS = 2000; // per player per board, between submissions
+
+// Each board is a table keyed by player, plus the day for Daily.
+const BOARDS = {
+  daily: { table: 'scores', keys: ['day', 'player'] },
+  endless: { table: 'endless', keys: ['player'] },
+};
 
 export default {
   async fetch(req, env) {
@@ -33,7 +40,12 @@ export default {
     if (url.pathname !== '/scores') return json({ error: 'not_found' }, 404);
 
     try {
-      if (req.method === 'GET') return json(await listScores(env, url.searchParams.get('day') || utcDay(0)));
+      if (req.method === 'GET') {
+        const board = url.searchParams.get('board') || 'daily';
+        if (board === 'endless') return json(await listScores(env, 'endless'));
+        if (board !== 'daily') throw new BadRequest('bad_board');
+        return json(await listScores(env, 'daily', url.searchParams.get('day') || utcDay(0)));
+      }
       if (req.method === 'POST') {
         if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin_not_allowed' }, 403);
         return await submitScore(req, env, json);
@@ -58,15 +70,18 @@ async function sha256hex(text) {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function listScores(env, day) {
-  if (!DAY_RE.test(day)) throw new BadRequest('bad_day');
+async function listScores(env, board, day) {
+  const { table } = BOARDS[board];
+  if (board === 'daily' && !DAY_RE.test(day)) throw new BadRequest('bad_day');
+  const where = board === 'daily' ? 'WHERE day = ?1' : '';
+  const args = board === 'daily' ? [day] : [];
   const { results } = await env.DB.prepare(
     `SELECT substr(player, 1, 12) AS pid, nickname, score, hops, bulls, chain
-       FROM scores WHERE day = ?1
+       FROM ${table} ${where}
       ORDER BY score DESC, updated_at ASC LIMIT 50`
-  ).bind(day).all();
-  const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM scores WHERE day = ?1').bind(day).first();
-  return { day, total: n, scores: results };
+  ).bind(...args).all();
+  const { n } = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} ${where}`).bind(...args).first();
+  return board === 'daily' ? { board, day, total: n, scores: results } : { board, total: n, scores: results };
 }
 
 function int(v, name, max) {
@@ -81,9 +96,12 @@ async function submitScore(req, env, json) {
   try { body = JSON.parse(text); } catch { throw new BadRequest('bad_json'); }
   if (!body || typeof body !== 'object') throw new BadRequest('bad_json');
 
+  const board = body.board === undefined ? 'daily' : body.board;
+  if (!BOARDS[board]) throw new BadRequest('bad_board');
+  const { table, keys } = BOARDS[board];
   const { day, key } = body;
   // Allow yesterday too, so a run that ends just after midnight UTC still counts.
-  if (day !== utcDay(0) && day !== utcDay(-1)) throw new BadRequest('bad_day');
+  if (board === 'daily' && day !== utcDay(0) && day !== utcDay(-1)) throw new BadRequest('bad_day');
   if (typeof key !== 'string' || !KEY_RE.test(key)) throw new BadRequest('bad_key');
   const nickname = typeof body.nickname === 'string' ? body.nickname.trim().replace(/\s+/g, ' ') : '';
   if (!NICK_RE.test(nickname)) throw new BadRequest('bad_nickname');
@@ -96,22 +114,24 @@ async function submitScore(req, env, json) {
 
   const player = await sha256hex(key);
   const now = new Date();
-  const prev = await env.DB.prepare('SELECT score, updated_at FROM scores WHERE day = ?1 AND player = ?2')
-    .bind(day, player).first();
+  const keyVals = board === 'daily' ? [day, player] : [player];
+  const match = keys.map((k, i) => `${k} = ?${i + 1}`).join(' AND ');
+  const prev = await env.DB.prepare(`SELECT score, updated_at FROM ${table} WHERE ${match}`).bind(...keyVals).first();
   if (prev && now - new Date(prev.updated_at) < MIN_GAP_MS) return json({ error: 'too_fast' }, 429);
 
   // Keep the best run; a new nickname always applies.
+  const cols = [...keys, 'nickname', 'score', 'hops', 'bulls', 'chain', 'updated_at'];
   await env.DB.prepare(
-    `INSERT INTO scores (day, player, nickname, score, hops, bulls, chain, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-     ON CONFLICT (day, player) DO UPDATE SET
+    `INSERT INTO ${table} (${cols.join(', ')})
+     VALUES (${cols.map((_, i) => '?' + (i + 1)).join(', ')})
+     ON CONFLICT (${keys.join(', ')}) DO UPDATE SET
        nickname = excluded.nickname,
-       hops  = CASE WHEN excluded.score > scores.score THEN excluded.hops  ELSE scores.hops  END,
-       bulls = CASE WHEN excluded.score > scores.score THEN excluded.bulls ELSE scores.bulls END,
-       chain = CASE WHEN excluded.score > scores.score THEN excluded.chain ELSE scores.chain END,
-       score = MAX(scores.score, excluded.score),
+       hops  = CASE WHEN excluded.score > ${table}.score THEN excluded.hops  ELSE ${table}.hops  END,
+       bulls = CASE WHEN excluded.score > ${table}.score THEN excluded.bulls ELSE ${table}.bulls END,
+       chain = CASE WHEN excluded.score > ${table}.score THEN excluded.chain ELSE ${table}.chain END,
+       score = MAX(${table}.score, excluded.score),
        updated_at = excluded.updated_at`
-  ).bind(day, player, nickname, score, hops, bulls, chain, now.toISOString()).run();
+  ).bind(...keyVals, nickname, score, hops, bulls, chain, now.toISOString()).run();
 
   return json({ ok: true, pid: player.slice(0, 12), best: Math.max(score, prev ? prev.score : 0) });
 }

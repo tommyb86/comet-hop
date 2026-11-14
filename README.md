@@ -24,4 +24,4 @@ A one-tap mobile game. Your comet orbits a planet: tap to break orbit, fly into 
 
 The game is a single self-contained `index.html` with no build step or dependencies (fonts load from Google Fonts). Open it in any browser.
 
-On this site the daily leaderboard runs on a small Cloudflare Worker (see [`worker/`](worker/README.md)), and players post under a nickname. The "Save card" button only works in the claude.ai version. Scores, unlocks and ghosts are saved in your own browser.
+On this site the Daily and all-time Endless leaderboards run on a small Cloudflare Worker (see [`worker/`](worker/README.md)), and players post under a nickname. The "Save card" button only works in the claude.ai version. Scores, unlocks and ghosts are saved in your own browser.

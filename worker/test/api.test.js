@@ -63,3 +63,25 @@ test('answers CORS preflight for the game’s site', async () => {
   assert.equal(r.status, 204);
   assert.equal(r.headers.get('access-control-allow-origin'), ORIGIN);
 });
+
+test('endless board keeps an all-time best per player, separate from daily', async () => {
+  const key = randomBytes(16).toString('hex');
+  let r = await post(run(key, { board: 'endless', day: undefined, score: 60, hops: 20 }));
+  assert.equal(r.status, 200);
+  const { pid } = await r.json();
+  // a daily post right away is not rate-limited by the endless one
+  assert.equal((await post(run(key, { score: 10 }))).status, 200);
+  await wait(2100);
+  r = await post(run(key, { board: 'endless', score: 30, hops: 20 }));
+  assert.equal((await r.json()).best, 60);
+  const endless = await (await fetch(`${BASE}/scores?board=endless`)).json();
+  assert.equal(endless.board, 'endless');
+  assert.equal(endless.scores.find(s => s.pid === pid).score, 60);
+  const daily = await (await fetch(`${BASE}/scores?day=${day}`)).json();
+  assert.equal(daily.scores.find(s => s.pid === pid).score, 10);
+});
+
+test('rejects unknown boards', async () => {
+  assert.equal((await post(run(randomBytes(16).toString('hex'), { board: 'weekly' }))).status, 400);
+  assert.equal((await fetch(`${BASE}/scores?board=weekly`)).status, 400);
+});
